@@ -701,21 +701,6 @@ cmd_pic() {
                 ;;
         esac
         
-        # Apply fade effects to overlay
-        if [[ "$fade_in_duration" != "0" || "$fade_out_duration" != "0" ]]; then
-            local fade_parts=()
-            if [[ "$fade_in_duration" != "0" ]]; then
-                fade_parts+=("fade=t=in:st=0:d=${fade_in_duration}")
-            fi
-            if [[ "$fade_out_duration" != "0" ]]; then
-                local fade_out_start
-                fade_out_start=$(echo "$duration_seconds $fade_out_duration" | awk '{printf "%.6f", $1 - $2}')
-                fade_parts+=("fade=t=out:st=${fade_out_start}:d=${fade_out_duration}")
-            fi
-            local fade_filter=$(IFS=,; echo "${fade_parts[*]}")
-            filters+="${ovr_label}${fade_filter}[ovr];"
-        fi
-        
         # Apply opacity
         if [[ "$opacity" != "1.0" ]]; then
             filters+="${ovr_label}colorchannelmixer=aa=${opacity}[ovr];"
