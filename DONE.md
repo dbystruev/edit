@@ -12,7 +12,7 @@ Cross-reference: [README.md](README.md) | [Implementation plan](TODO.md)
 - [x] Implemented auto-install with user permission (apt, brew, choco, winget, dnf, yum, pacman, zypper)
 - [x] Created main command dispatcher to route subcommands
 
-## Phase 2: insert-picture Command
+## Phase 2: pic Command (image overlay)
 
 - [x] Parse required arguments: input video, output video, picture file
 - [x] Parse `--at` parameter: accept seconds (decimal) or frame number (prefix with 'f')
@@ -32,12 +32,12 @@ Cross-reference: [README.md](README.md) | [Implementation plan](TODO.md)
 - [x] Handle scale: stretch image to fill rect exactly
 - [x] Execute ffmpeg command and handle errors
 
-## Phase 3: insert-text Command
+## Phase 3: text Command (text overlay)
 
 - [x] Parse required arguments: input video, output video, text string
-- [x] Parse `--at` parameter (same as insert-picture)
-- [x] Parse `--duration` parameter (same as insert-picture)
-- [x] Parse `--appear` / `--disappear` parameters (same as insert-picture)
+- [x] Parse `--at` parameter (same as pic)
+- [x] Parse `--duration` parameter (same as pic)
+- [x] Parse `--appear` / `--disappear` parameters (same as pic)
 - [x] Parse `--rect` parameter for text placement area
 - [x] Parse `--color` parameter: named colors or hex values
 - [x] Parse `--size` parameter: font size in pixels
@@ -50,7 +50,7 @@ Cross-reference: [README.md](README.md) | [Implementation plan](TODO.md)
 - [x] Generate ffmpeg drawtext filter with all options
 - [x] Execute ffmpeg command and handle errors
 
-## Phase 4: stats Command
+## Phase 4: stat Command (file info)
 
 - [x] Parse input file argument
 - [x] Run ffprobe to extract video metadata
@@ -70,3 +70,4 @@ Cross-reference: [README.md](README.md) | [Implementation plan](TODO.md)
 
 - [x] Added examples to --help output
 - [x] Created dedicated help for each subcommand
+- [x] Simplified command names: pic, text, stat

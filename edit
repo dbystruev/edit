@@ -146,24 +146,24 @@ OPTIONS:
     -v, --version       Show version
 
 COMMANDS:
-    insert-picture      Overlay an image onto a video
-    insert-text         Add text overlay to a video
-    stats               Display detailed info about a video or image
+    pic                 Overlay an image onto a video
+    text                Add text overlay to a video
+    stat                Display detailed info about a video or image
 
 EXAMPLES:
     # Insert a logo on a video for 10 seconds starting at 5s
-    edit insert-picture input.mp4 output.mp4 logo.png \
+    edit pic input.mp4 output.mp4 logo.png \
         --at 5 --duration 10 --rect 10%,10% 90%,90%
 
     # Insert text with red color and size 72
-    edit insert-text input.mp4 output.mp4 "Hello World" \
+    edit text input.mp4 output.mp4 "Hello World" \
         --at 2 --duration 5 --color red --size 72
 
     # Get video stats
-    edit stats input.mp4
+    edit stat input.mp4
 
     # Auto-confirm all prompts
-    edit -y insert-picture input.mp4 output.mp4 logo.png --at 0 --rect 0,0 100%,100%
+    edit -y pic input.mp4 output.mp4 logo.png --at 0 --rect 0,0 100%,100%
 
 RUN WITHOUT ARGUMENTS to see this help.
 
@@ -173,10 +173,10 @@ EOF
 
 show_insert_picture_help() {
     cat << 'EOF'
-edit insert-picture - Overlay an image onto a video
+edit pic - Overlay an image onto a video
 
 USAGE:
-    edit insert-picture INPUT OUTPUT PICTURE [OPTIONS]
+    edit pic INPUT OUTPUT PICTURE [OPTIONS]
 
 ARGUMENTS:
     INPUT           Input video file
@@ -198,25 +198,25 @@ OPTIONS:
 
 EXAMPLES:
     # Insert logo in top-right corner for 5 seconds
-    edit insert-picture video.mp4 out.mp4 logo.png \
+    edit pic video.mp4 out.mp4 logo.png \
         --at 10 --duration 5 --rect 80%,5% 95%,25%
 
     # Insert watermark with 50% opacity
-    edit insert-picture video.mp4 out.mp4 watermark.png \
+    edit pic video.mp4 out.mp4 watermark.png \
         --at 0 --duration f300 --rect 50%,50% 100%,100% --opacity 0.5
 
     # Insert image scaled to fill center area
-    edit insert-picture video.mp4 out.mp4 photo.jpg \
+    edit pic video.mp4 out.mp4 photo.jpg \
         --at 2 --rect 25%,25% 75%,75% --mode aspect-fill
 EOF
 }
 
 show_insert_text_help() {
     cat << 'EOF'
-edit insert-text - Add text overlay to a video
+edit text - Add text overlay to a video
 
 USAGE:
-    edit insert-text INPUT OUTPUT TEXT [OPTIONS]
+    edit text INPUT OUTPUT TEXT [OPTIONS]
 
 ARGUMENTS:
     INPUT           Input video file
@@ -241,25 +241,25 @@ OPTIONS:
 
 EXAMPLES:
     # Simple text overlay
-    edit insert-text video.mp4 out.mp4 "Hello World" --at 0 --duration 5
+    edit text video.mp4 out.mp4 "Hello World" --at 0 --duration 5
 
     # Styled text with outline and shadow
-    edit insert-text video.mp4 out.mp4 "Title" \
+    edit text video.mp4 out.mp4 "Title" \
         --color white --size 96 --bold \
         --outline 3:black --shadow 2:2:gray
 
     # Text with background
-    edit insert-text video.mp4 out.mp4 "Subtitle" \
+    edit text video.mp4 out.mp4 "Subtitle" \
         --color white --bg-color blue --bg-padding 10
 EOF
 }
 
 show_stats_help() {
     cat << 'EOF'
-edit stats - Display detailed information about a video or image
+edit stat - Display detailed information about a video or image
 
 USAGE:
-    edit stats INPUT [OPTIONS]
+    edit stat INPUT [OPTIONS]
 
 ARGUMENTS:
     INPUT           Input video or image file
@@ -1151,19 +1151,19 @@ main() {
     shift
     
     case "$command" in
-        insert-picture)
+        pic|picture|image)
             cmd_insert_picture "$@"
             ;;
-        insert-text)
+        text)
             cmd_insert_text "$@"
             ;;
-        stats)
+        stat|stats)
             cmd_stats "$@"
             ;;
         *)
             error "Unknown command: $command"
             echo ""
-            echo "Available commands: insert-picture, insert-text, stats"
+            echo "Available commands: pic, text, stat"
             echo "Run 'edit --help' for more information."
             exit 1
             ;;

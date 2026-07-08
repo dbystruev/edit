@@ -12,22 +12,22 @@ curl -fsSL https://raw.githubusercontent.com/dbystruev/edit/main/edit -o edit &&
 ./edit -h
 
 # Insert a logo on a video
-./edit insert-picture input.mp4 output.mp4 logo.png --at 5 --duration 10 --rect 10%,10% 90%,90%
+./edit pic input.mp4 output.mp4 logo.png --at 5 --duration 10 --rect 10%,10% 90%,90%
 
 # Insert text overlay
-./edit insert-text input.mp4 output.mp4 "Hello World" --at 2 --duration 5 --color red --size 72
+./edit text input.mp4 output.mp4 "Hello World" --at 2 --duration 5 --color red --size 72
 
 # Get video stats
-./edit stats input.mp4
+./edit stat input.mp4
 ```
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `insert-picture` | Overlay an image onto a video at a specified time |
-| `insert-text` | Add text overlay to a video with font/color control |
-| `stats` | Display detailed info about a video or image file |
+| `pic` | Overlay an image onto a video at a specified time |
+| `text` | Add text overlay to a video with font/color control |
+| `stat` | Display detailed info about a video or image file |
 
 ## Requirements
 
