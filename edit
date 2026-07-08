@@ -725,13 +725,14 @@ cmd_pic() {
         # Scale picture to fit rectangle
         case "$mode" in
             aspect-fit)
-                filters+="${pic_label}scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease${ovr_label};"
+                # Scale to fit, then pad to exact dimensions with transparent center
+                filters+="${pic_label}scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba${ovr_label};"
                 ;;
             aspect-fill)
-                filters+="${pic_label}scale=${rect_w}:${rect_h}:force_original_aspect_ratio=increase,crop=${rect_w}:${rect_h}${ovr_label};"
+                filters+="${pic_label}scale=${rect_w}:${rect_h}:force_original_aspect_ratio=increase,crop=${rect_w}:${rect_h},format=rgba${ovr_label};"
                 ;;
             scale)
-                filters+="${pic_label}scale=${rect_w}:${rect_h}${ovr_label};"
+                filters+="${pic_label}scale=${rect_w}:${rect_h},format=rgba${ovr_label};"
                 ;;
             *)
                 error "Unknown mode: $mode (use aspect-fit, aspect-fill, or scale)"
