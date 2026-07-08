@@ -745,14 +745,19 @@ cmd_pic() {
         echo ""
     fi
     
+    local loglevel="warning"
+    if [[ "$VERBOSE" == "true" ]]; then
+        loglevel="info"
+    fi
+    
     local ffmpeg_cmd=(
         ffmpeg -y
+        -loglevel "$loglevel"
         "${input_args[@]}"
         -filter_complex "$filters"
         -map "${last_label}"
         -map "0:a?"
         -c:a copy
-        -loglevel warning
         -stats
         "$output"
     )
@@ -761,8 +766,6 @@ cmd_pic() {
         info "FFmpeg command:"
         echo "${ffmpeg_cmd[@]}" | sed 's/ -/ \\\n  -/g'
         echo ""
-        ffmpeg_cmd[7]="-loglevel"
-        ffmpeg_cmd[8]="info"
     fi
     
     "${ffmpeg_cmd[@]}"
@@ -1027,14 +1030,19 @@ cmd_text() {
         echo ""
     fi
     
+    local loglevel="warning"
+    if [[ "$VERBOSE" == "true" ]]; then
+        loglevel="info"
+    fi
+    
     local ffmpeg_cmd=(
         ffmpeg -y
+        -loglevel "$loglevel"
         -i "$input"
         -vf "$filters"
         -map "[out]"
         -map "0:a?"
         -c:a copy
-        -loglevel warning
         -stats
         "$output"
     )
@@ -1043,8 +1051,6 @@ cmd_text() {
         info "FFmpeg command:"
         echo "${ffmpeg_cmd[@]}" | sed 's/ -/ \\\n  -/g'
         echo ""
-        ffmpeg_cmd[6]="-loglevel"
-        ffmpeg_cmd[7]="info"
     fi
     
     "${ffmpeg_cmd[@]}"
