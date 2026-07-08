@@ -4,7 +4,7 @@ set -euo pipefail
 # edit - A command-line video editing toolkit powered by ffmpeg
 # Repository: https://github.com/dbystruev/edit
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 AUTO_YES=false
 VERBOSE=false
 
@@ -149,7 +149,7 @@ OPTIONS:
 COMMANDS:
     pic                 Overlay an image onto a video
     text                Add text overlay to a video
-    stat                Display detailed info about a video or image
+    stat                Display detailed info about video/image files
 
 EXAMPLES:
     # Insert a logo on a video for 10 seconds starting at 5s
@@ -160,8 +160,8 @@ EXAMPLES:
     edit text input.mp4 output.mp4 "Hello World" \
         --at 2 --duration 5 --color red --size 72
 
-    # Get video stats
-    edit stat input.mp4
+    # Get video stats (supports multiple files and wildcards)
+    edit stat input.mp4 *.jpeg
 
     # Auto-confirm all prompts
     edit -y pic input.mp4 output.mp4 logo.png --at 0 --rect 0,0 100%,100%
@@ -199,36 +199,21 @@ OPTIONS:
     --file FILE     Load additional parameters from file (one option per line)
 
 SEQUENCE MODE:
-    Multiple images can be inserted by specifying them in order. Each image
-    inherits parameters from the previous one unless overridden.
+    Multiple images can be inserted by specifying them in order.
 
-    Example with sequence:
+    Example:
     edit pic input.mp4 output.mp4 \
         img1.png --at 0 --rect 10%,10% 40%,40% \
         img2.png --at 5 --rect 50%,50% 90%,90%
-
-FILE FORMAT:
-    Parameters file (one option per line):
-    --at 10
-    --duration 5
-    --rect 10%,10% 40%,40%
-    --mode aspect-fit
 
 EXAMPLES:
     # Insert logo in top-right corner for 5 seconds
     edit pic video.mp4 out.mp4 logo.png \
         --at 10 --duration 5 --rect 80%,5% 95%,25%
 
-    # Insert watermark with 50% opacity
-    edit pic video.mp4 out.mp4 watermark.png \
-        --at 0 --duration f300 --rect 50%,50% 100%,100% --opacity 0.5
-
     # Insert image scaled to fill center area
     edit pic video.mp4 out.mp4 photo.jpg \
         --at 2 --rect 25%,25% 75%,75% --mode aspect-fill
-
-    # Load parameters from file
-    edit pic video.mp4 out.mp4 logo.png --file params.txt
 EOF
 }
 
@@ -269,26 +254,32 @@ EXAMPLES:
     edit text video.mp4 out.mp4 "Title" \
         --color white --size 96 --bold \
         --outline 3:black --shadow 2:2:gray
-
-    # Text with background
-    edit text video.mp4 out.mp4 "Subtitle" \
-        --color white --bg-color blue --bg-padding 10
 EOF
 }
 
 show_stat_help() {
     cat << 'EOF'
-edit stat - Display detailed information about a video or image
+edit stat - Display detailed information about video or image files
 
 USAGE:
-    edit stat INPUT [OPTIONS]
+    edit stat FILE [FILE...] [OPTIONS]
 
 ARGUMENTS:
-    INPUT           Input video or image file
+    FILE            One or more video or image files (supports wildcards)
 
 OPTIONS:
     --json          Output in JSON format
     --short         Show only essential info
+
+EXAMPLES:
+    # Single file
+    edit stat video.mp4
+
+    # Multiple files
+    edit stat video.mp4 image.jpeg
+
+    # Wildcards
+    edit stat *.mp4 *.jpeg
 
 DISPLAYED INFO:
     - File size (human readable)
@@ -300,7 +291,6 @@ DISPLAYED INFO:
     - Total frame count
     - Bitrate
     - Pixel format
-    - Image-specific: color depth, channels, DPI
 EOF
 }
 
@@ -309,7 +299,6 @@ EOF
 # ============================================================================
 
 # Parse a single coordinate (pixels or percentage)
-# Usage: parse_coord "10%" "3840" => outputs pixel value
 parse_coord() {
     local coord="$1"
     local total="$2"
@@ -332,8 +321,6 @@ parse_coord() {
 }
 
 # Parse rectangle string "X1,Y1 X2,Y2" to pixels
-# Usage: parse_rect "10%,10% 40%,40%" "3840" "2160"
-# Returns: x1 y1 x2 y2 width height
 parse_rect() {
     local rect_str="$1"
     local video_width="$2"
@@ -443,12 +430,6 @@ get_duration() {
         -of csv=p=0 "$1" 2>/dev/null
 }
 
-get_frame_count() {
-    ffprobe -v quiet -select_streams v:0 \
-        -show_entries stream=nb_read_frames \
-        -of csv=p=0 "$1" 2>/dev/null
-}
-
 # ============================================================================
 # Opacity Parsing
 # ============================================================================
@@ -491,8 +472,6 @@ get_fade_duration() {
 # Parameter File Loading
 # ============================================================================
 
-# Load parameters from file into an array
-# File format: one option per line (e.g., --at 10, --rect 10%,10% 40%,40%)
 load_params_file() {
     local file="$1"
     local -n result_array=$2
@@ -527,7 +506,7 @@ load_params_file() {
 cmd_pic() {
     local input=""
     local output=""
-    local pictures=()  # Array of picture files
+    local pictures=()
     local at="seconds:0"
     local duration="seconds:3"
     local appear="quick"
@@ -596,7 +575,6 @@ cmd_pic() {
                 elif [[ -z "$output" ]]; then
                     output="$1"
                 else
-                    # This is a picture file
                     pictures+=("$1")
                 fi
                 shift
@@ -609,45 +587,18 @@ cmd_pic() {
         local file_params=()
         load_params_file "$param_file" file_params || exit 1
         
-        # Re-parse with file parameters
         set -- "${file_params[@]}"
         while [[ $# -gt 0 ]]; do
             case "$1" in
-                --at)
-                    at=$(parse_time "$2") || exit 1
-                    shift 2
-                    ;;
-                --duration)
-                    duration=$(parse_time "$2") || exit 1
-                    shift 2
-                    ;;
-                --appear)
-                    appear="$2"
-                    shift 2
-                    ;;
-                --disappear)
-                    disappear="$2"
-                    shift 2
-                    ;;
-                --rect)
-                    rect="$2 $3"
-                    shift 3
-                    ;;
-                --mode)
-                    mode="$2"
-                    shift 2
-                    ;;
-                --opacity)
-                    opacity=$(parse_opacity "$2") || exit 1
-                    shift 2
-                    ;;
-                --transparent-bg)
-                    transparent_bg="$2"
-                    shift 2
-                    ;;
-                *)
-                    shift
-                    ;;
+                --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
+                --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
+                --appear) appear="$2"; shift 2 ;;
+                --disappear) disappear="$2"; shift 2 ;;
+                --rect) rect="$2 $3"; shift 3 ;;
+                --mode) mode="$2"; shift 2 ;;
+                --opacity) opacity=$(parse_opacity "$2") || exit 1; shift 2 ;;
+                --transparent-bg) transparent_bg="$2"; shift 2 ;;
+                *) shift ;;
             esac
         done
     fi
@@ -712,27 +663,32 @@ cmd_pic() {
     
     info "Start: ${start_seconds}s, Duration: ${duration_seconds}s"
     
-    # Build ffmpeg filter complex for all pictures
+    # Build input arguments
+    local input_args=()
+    input_args+=(-i "$input")
+    for pic in "${pictures[@]}"; do
+        input_args+=(-i "$pic")
+    done
+    
+    # Build filter complex
     local filters=""
-    local video_label="[0:v]"
-    local input_count=1
+    local last_label="[0:v]"
+    local input_idx=1
     
     for pic in "${pictures[@]}"; do
-        local pic_label="[${input_count}:v]"
-        local ovr_label="[ovr${input_count}]"
-        local next_video_label="[v${input_count}]"
+        local pic_idx=$input_idx
+        local ovr_label="[ovr]"
         
-        # Scale picture to fit rectangle
+        # Scale and format the picture
         case "$mode" in
             aspect-fit)
-                # Scale to fit, then pad to exact dimensions with transparent center
-                filters+="${pic_label}scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba${ovr_label};"
+                filters+="[${pic_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba${ovr_label};"
                 ;;
             aspect-fill)
-                filters+="${pic_label}scale=${rect_w}:${rect_h}:force_original_aspect_ratio=increase,crop=${rect_w}:${rect_h},format=rgba${ovr_label};"
+                filters+="[${pic_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=increase,crop=${rect_w}:${rect_h},format=rgba${ovr_label};"
                 ;;
             scale)
-                filters+="${pic_label}scale=${rect_w}:${rect_h},format=rgba${ovr_label};"
+                filters+="[${pic_idx}:v]scale=${rect_w}:${rect_h},format=rgba${ovr_label};"
                 ;;
             *)
                 error "Unknown mode: $mode (use aspect-fit, aspect-fill, or scale)"
@@ -740,44 +696,40 @@ cmd_pic() {
                 ;;
         esac
         
-        # Apply fade effects
+        # Apply fade effects to overlay
         if [[ "$fade_in_duration" != "0" || "$fade_out_duration" != "0" ]]; then
-            local fade_filter=""
+            local fade_parts=()
             if [[ "$fade_in_duration" != "0" ]]; then
-                fade_filter+="fade=t=in:st=0:d=${fade_in_duration}"
+                fade_parts+=("fade=t=in:st=0:d=${fade_in_duration}")
             fi
             if [[ "$fade_out_duration" != "0" ]]; then
                 local fade_out_start
                 fade_out_start=$(echo "$duration_seconds $fade_out_duration" | awk '{printf "%.6f", $1 - $2}')
-                [[ -n "$fade_filter" ]] && fade_filter+=","
-                fade_filter+="fade=t=out:st=${fade_out_start}:d=${fade_out_duration}"
+                fade_parts+=("fade=t=out:st=${fade_out_start}:d=${fade_out_duration}")
             fi
-            filters+="${ovr_label}${fade_filter}${ovr_label};"
+            local fade_filter=$(IFS=,; echo "${fade_parts[*]}")
+            filters+="${ovr_label}${fade_filter}[ovr];"
         fi
         
         # Apply opacity
         if [[ "$opacity" != "1.0" ]]; then
-            filters+="${ovr_label}colorchannelmixer=aa=${opacity}${ovr_label};"
+            filters+="${ovr_label}colorchannelmixer=aa=${opacity}[ovr];"
         fi
         
-        # Overlay onto video
+        # Calculate enable timing
         local end_seconds
         end_seconds=$(echo "$start_seconds $duration_seconds" | awk '{printf "%.6f", $1 + $2}')
-        filters+="${video_label}${ovr_label}overlay=${x1}:${y1}:enable='between(t,${start_seconds},${end_seconds})'${next_video_label};"
-        video_label="${next_video_label}"
         
-        input_count=$((input_count + 1))
+        # Overlay onto video with enable timing
+        local next_label="[v${input_idx}]"
+        filters+="${last_label}${ovr_label}overlay=${x1}:${y1}:enable='between(t\\,${start_seconds}\\,${end_seconds})'${next_label};"
+        last_label="${next_label}"
+        
+        input_idx=$((input_idx + 1))
     done
     
-    # Remove trailing semicolon and set final output label
+    # Remove trailing semicolon
     filters="${filters%;}"
-    
-    # Build input arguments
-    local input_args=()
-    input_args+=(-i "$input")
-    for pic in "${pictures[@]}"; do
-        input_args+=(-i "$pic")
-    done
     
     # Execute ffmpeg
     info "Processing ${#pictures[@]} image(s)..."
@@ -786,7 +738,7 @@ cmd_pic() {
         ffmpeg -y
         "${input_args[@]}"
         -filter_complex "$filters"
-        -map "${video_label}"
+        -map "${last_label}"
         -map "0:a?"
         -c:a copy
         -loglevel warning
@@ -795,7 +747,7 @@ cmd_pic() {
     )
     
     if [[ "$VERBOSE" == "true" ]]; then
-        ffmpeg_cmd[7]="-loglevel" 
+        ffmpeg_cmd[7]="-loglevel"
         ffmpeg_cmd[8]="info"
     fi
     
@@ -930,69 +882,24 @@ cmd_text() {
         local file_params=()
         load_params_file "$param_file" file_params || exit 1
         
-        # Re-parse with file parameters
         set -- "${file_params[@]}"
         while [[ $# -gt 0 ]]; do
             case "$1" in
-                --at)
-                    at=$(parse_time "$2") || exit 1
-                    shift 2
-                    ;;
-                --duration)
-                    duration=$(parse_time "$2") || exit 1
-                    shift 2
-                    ;;
-                --appear)
-                    appear="$2"
-                    shift 2
-                    ;;
-                --disappear)
-                    disappear="$2"
-                    shift 2
-                    ;;
-                --rect)
-                    rect="$2 $3"
-                    shift 3
-                    ;;
-                --color)
-                    color="$2"
-                    shift 2
-                    ;;
-                --size)
-                    size="$2"
-                    shift 2
-                    ;;
-                --font)
-                    font="$2"
-                    shift 2
-                    ;;
-                --bold)
-                    bold=true
-                    shift
-                    ;;
-                --italic)
-                    italic=true
-                    shift
-                    ;;
-                --outline)
-                    outline="$2"
-                    shift 2
-                    ;;
-                --shadow)
-                    shadow="$2"
-                    shift 2
-                    ;;
-                --bg-color)
-                    bg_color="$2"
-                    shift 2
-                    ;;
-                --bg-padding)
-                    bg_padding="$2"
-                    shift 2
-                    ;;
-                *)
-                    shift
-                    ;;
+                --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
+                --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
+                --appear) appear="$2"; shift 2 ;;
+                --disappear) disappear="$2"; shift 2 ;;
+                --rect) rect="$2 $3"; shift 3 ;;
+                --color) color="$2"; shift 2 ;;
+                --size) size="$2"; shift 2 ;;
+                --font) font="$2"; shift 2 ;;
+                --bold) bold=true; shift ;;
+                --italic) italic=true; shift ;;
+                --outline) outline="$2"; shift 2 ;;
+                --shadow) shadow="$2"; shift 2 ;;
+                --bg-color) bg_color="$2"; shift 2 ;;
+                --bg-padding) bg_padding="$2"; shift 2 ;;
+                *) shift ;;
             esac
         done
     fi
@@ -1088,7 +995,7 @@ cmd_text() {
     # Time enable
     local end_seconds
     end_seconds=$(echo "$start_seconds $duration_seconds" | awk '{printf "%.6f", $1 + $2}')
-    drawtext_opts+=":enable='between(t,${start_seconds},${end_seconds})'"
+    drawtext_opts+=":enable='between(t\\,${start_seconds}\\,${end_seconds})'"
     
     # Build filter chain
     local filters="[0:v]drawtext=${drawtext_opts}[out]"
@@ -1127,8 +1034,122 @@ cmd_text() {
 # stat Command - Display Info
 # ============================================================================
 
+# Display stats for a single file
+display_stat() {
+    local input="$1"
+    local json_output="$2"
+    local short_output="$3"
+    
+    [[ ! -f "$input" ]] && error "File not found: $input" && return 1
+    
+    # Get file size
+    local file_size
+    if [[ "$(uname)" == "Darwin" ]]; then
+        file_size=$(stat -f%z "$input" 2>/dev/null || echo "unknown")
+    else
+        file_size=$(stat -c%s "$input" 2>/dev/null || echo "unknown")
+    fi
+    
+    # Format file size
+    local size_human
+    if [[ "$file_size" != "unknown" ]]; then
+        size_human=$(numfmt --to=iec-i --suffix=B "$file_size" 2>/dev/null || echo "${file_size} bytes")
+    else
+        size_human="unknown"
+    fi
+    
+    if [[ "$json_output" == "true" ]]; then
+        local width height fps duration codec format_name pixel_format bitrate
+        width=$(get_video_width "$input" 2>/dev/null || echo "N/A")
+        height=$(get_video_height "$input" 2>/dev/null || echo "N/A")
+        fps=$(get_video_fps "$input" 2>/dev/null || echo "N/A")
+        duration=$(get_duration "$input" 2>/dev/null || echo "N/A")
+        codec=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
+        format_name=$(ffprobe -v quiet -show_entries format=format_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
+        pixel_format=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
+        bitrate=$(ffprobe -v quiet -show_entries format=bit_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+        
+        cat << EOF
+{
+  "file": "$input",
+  "size": "$file_size",
+  "size_human": "$size_human",
+  "format": "$format_name",
+  "codec": "$codec",
+  "width": "$width",
+  "height": "$height",
+  "fps": "$fps",
+  "duration": "$duration",
+  "pixel_format": "$pixel_format",
+  "bitrate": "$bitrate"
+}
+EOF
+    else
+        echo ""
+        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${BLUE} File Statistics${NC}"
+        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e " ${GREEN}File:${NC}         $input"
+        echo -e " ${GREEN}Size:${NC}         $size_human ($file_size bytes)"
+        
+        local format_name
+        format_name=$(ffprobe -v quiet -show_entries format=format_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
+        echo -e " ${GREEN}Format:${NC}       $format_name"
+        
+        local codec width height fps duration pixel_format bitrate frames
+        codec=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+        width=$(get_video_width "$input" 2>/dev/null || echo "N/A")
+        height=$(get_video_height "$input" 2>/dev/null || echo "N/A")
+        fps=$(get_video_fps "$input" 2>/dev/null || echo "N/A")
+        duration=$(get_duration "$input" 2>/dev/null || echo "N/A")
+        pixel_format=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+        bitrate=$(ffprobe -v quiet -show_entries format=bit_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+        frames=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=nb_frames -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+        
+        if [[ "$codec" != "N/A" ]]; then
+            echo -e " ${GREEN}Video Codec:${NC}  $codec"
+            echo -e " ${GREEN}Resolution:${NC}  ${width} × ${height}"
+            echo -e " ${GREEN}Frame Rate:${NC}  $fps fps"
+            echo -e " ${GREEN}Pixel Fmt:${NC}   $pixel_format"
+        fi
+        
+        if [[ "$duration" != "N/A" ]]; then
+            local hours minutes seconds_val
+            hours=$(echo "$duration" | awk '{printf "%02d", int($1/3600)}')
+            minutes=$(echo "$duration" | awk '{printf "%02d", int($1/60)%60}')
+            seconds_val=$(echo "$duration" | awk '{printf "%06.3f", $1%60}')
+            echo -e " ${GREEN}Duration:${NC}     ${hours}:${minutes}:${seconds_val} ($duration s)"
+        fi
+        
+        if [[ "$frames" != "N/A" ]]; then
+            echo -e " ${GREEN}Frames:${NC}       $frames"
+        fi
+        
+        if [[ "$bitrate" != "N/A" && "$bitrate" != "N/A" ]]; then
+            local bitrate_kbps
+            bitrate_kbps=$(echo "$bitrate" | awk '{printf "%.0f", $1/1000}')
+            echo -e " ${GREEN}Bitrate:${NC}      ${bitrate_kbps} kbps"
+        fi
+        
+        local audio_codec audio_sample_rate audio_channels
+        audio_codec=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null || echo "")
+        
+        if [[ -n "$audio_codec" && "$audio_codec" != "N/A" ]]; then
+            audio_sample_rate=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=sample_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+            audio_channels=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=channels -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+            
+            echo -e " ${GREEN}Audio Codec:${NC}  $audio_codec"
+            echo -e " ${GREEN}Sample Rate:${NC} ${audio_sample_rate} Hz"
+            echo -e " ${GREEN}Channels:${NC}    $audio_channels"
+        fi
+        
+        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+    fi
+}
+
 cmd_stat() {
-    local input=""
+    local files=()
     local json_output=false
     local short_output=false
 
@@ -1157,136 +1178,33 @@ cmd_stat() {
                 exit 1
                 ;;
             *)
-                if [[ -z "$input" ]]; then
-                    input="$1"
-                else
-                    error "Unexpected argument: $1"
-                    exit 1
-                fi
+                files+=("$1")
                 shift
                 ;;
         esac
     done
     
     # Validate input
-    if [[ -z "$input" ]]; then
-        error "Missing required argument: INPUT file"
+    if [[ ${#files[@]} -eq 0 ]]; then
+        error "Missing required argument: FILE(s)"
         echo ""
         show_stat_help
         exit 1
     fi
     
-    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
+    # Process each file
+    local has_error=false
+    for file in "${files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            error "File not found: $file"
+            has_error=true
+            continue
+        fi
+        display_stat "$file" "$json_output" "$short_output" || has_error=true
+    done
     
-    # Get file size
-    local file_size
-    if [[ "$(uname)" == "Darwin" ]]; then
-        file_size=$(stat -f%z "$input" 2>/dev/null || echo "unknown")
-    else
-        file_size=$(stat -c%s "$input" 2>/dev/null || echo "unknown")
-    fi
-    
-    # Format file size
-    local size_human
-    if [[ "$file_size" != "unknown" ]]; then
-        size_human=$(numfmt --to=iec-i --suffix=B "$file_size" 2>/dev/null || echo "${file_size} bytes")
-    else
-        size_human="unknown"
-    fi
-    
-    if [[ "$json_output" == "true" ]]; then
-        # JSON output
-        local width height fps duration codec format_name pixel_format bitrate
-        width=$(get_video_width "$input" 2>/dev/null || echo "N/A")
-        height=$(get_video_height "$input" 2>/dev/null || echo "N/A")
-        fps=$(get_video_fps "$input" 2>/dev/null || echo "N/A")
-        duration=$(get_duration "$input" 2>/dev/null || echo "N/A")
-        codec=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
-        format_name=$(ffprobe -v quiet -show_entries format=format_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
-        pixel_format=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
-        bitrate=$(ffprobe -v quiet -show_entries format=bit_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        
-        cat << EOF
-{
-  "file": "$input",
-  "size": "$file_size",
-  "size_human": "$size_human",
-  "format": "$format_name",
-  "codec": "$codec",
-  "width": "$width",
-  "height": "$height",
-  "fps": "$fps",
-  "duration": "$duration",
-  "pixel_format": "$pixel_format",
-  "bitrate": "$bitrate"
-}
-EOF
-    else
-        # Table output
-        echo ""
-        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${BLUE} File Statistics${NC}"
-        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e " ${GREEN}File:${NC}         $input"
-        echo -e " ${GREEN}Size:${NC}         $size_human ($file_size bytes)"
-        
-        # Get format info
-        local format_name
-        format_name=$(ffprobe -v quiet -show_entries format=format_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
-        echo -e " ${GREEN}Format:${NC}       $format_name"
-        
-        # Video stream info
-        local codec width height fps duration pixel_format bitrate frames
-        codec=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        width=$(get_video_width "$input" 2>/dev/null || echo "N/A")
-        height=$(get_video_height "$input" 2>/dev/null || echo "N/A")
-        fps=$(get_video_fps "$input" 2>/dev/null || echo "N/A")
-        duration=$(get_duration "$input" 2>/dev/null || echo "N/A")
-        pixel_format=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        bitrate=$(ffprobe -v quiet -show_entries format=bit_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        frames=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=nb_frames -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        
-        if [[ "$codec" != "N/A" ]]; then
-            echo -e " ${GREEN}Video Codec:${NC}  $codec"
-            echo -e " ${GREEN}Resolution:${NC}  ${width} × ${height}"
-            echo -e " ${GREEN}Frame Rate:${NC}  $fps fps"
-            echo -e " ${GREEN}Pixel Fmt:${NC}   $pixel_format"
-        fi
-        
-        if [[ "$duration" != "N/A" ]]; then
-            # Convert seconds to HH:MM:SS
-            local hours minutes seconds_val
-            hours=$(echo "$duration" | awk '{printf "%02d", int($1/3600)}')
-            minutes=$(echo "$duration" | awk '{printf "%02d", int($1/60)%60}')
-            seconds_val=$(echo "$duration" | awk '{printf "%06.3f", $1%60}')
-            echo -e " ${GREEN}Duration:${NC}     ${hours}:${minutes}:${seconds_val} ($duration s)"
-        fi
-        
-        if [[ "$frames" != "N/A" ]]; then
-            echo -e " ${GREEN}Frames:${NC}       $frames"
-        fi
-        
-        if [[ "$bitrate" != "N/A" && "$bitrate" != "N/A" ]]; then
-            local bitrate_kbps
-            bitrate_kbps=$(echo "$bitrate" | awk '{printf "%.0f", $1/1000}')
-            echo -e " ${GREEN}Bitrate:${NC}      ${bitrate_kbps} kbps"
-        fi
-        
-        # Audio stream info
-        local audio_codec audio_sample_rate audio_channels
-        audio_codec=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null || echo "")
-        
-        if [[ -n "$audio_codec" && "$audio_codec" != "N/A" ]]; then
-            audio_sample_rate=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=sample_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-            audio_channels=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=channels -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-            
-            echo -e " ${GREEN}Audio Codec:${NC}  $audio_codec"
-            echo -e " ${GREEN}Sample Rate:${NC} ${audio_sample_rate} Hz"
-            echo -e " ${GREEN}Channels:${NC}    $audio_channels"
-        fi
-        
-        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
+    if [[ "$has_error" == "true" ]]; then
+        exit 1
     fi
 }
 
