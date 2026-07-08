@@ -539,14 +539,27 @@ cmd_pic() {
                 ;;
             --at)
                 at=$(parse_time "$2") || exit 1
+                # Update last picture if it exists (options after image file)
+                if [[ ${#pictures[@]} -gt 0 ]]; then
+                    local last_idx=$(( ${#pictures[@]} - 1 ))
+                    pic_ats[$last_idx]="$at"
+                fi
                 shift 2
                 ;;
             --duration)
                 duration=$(parse_time "$2") || exit 1
+                if [[ ${#pictures[@]} -gt 0 ]]; then
+                    local last_idx=$(( ${#pictures[@]} - 1 ))
+                    pic_durations[$last_idx]="$duration"
+                fi
                 shift 2
                 ;;
             --rect)
                 rect="$2 $3"
+                if [[ ${#pictures[@]} -gt 0 ]]; then
+                    local last_idx=$(( ${#pictures[@]} - 1 ))
+                    pic_rects[$last_idx]="$rect"
+                fi
                 shift 3
                 ;;
             --mode)
