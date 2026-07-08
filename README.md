@@ -29,11 +29,29 @@ curl -fsSL https://raw.githubusercontent.com/dbystruev/edit/main/edit -o edit &&
 | `text` | Add text overlay to a video with font/color control |
 | `stat` | Display detailed info about a video or image file |
 
+## Features
+
+### pic command
+- Insert multiple images in sequence
+- Aspect-fit, aspect-fill, or scale modes
+- Fade-in/fade-out effects
+- Opacity control
+- Load parameters from file (`--file`)
+
+### text command
+- Color, size, font control
+- Bold, italic styling
+- Text outline and shadow
+- Background color with padding
+
+### stat command
+- Video and image metadata
+- JSON output option
+
 ## Requirements
 
 - bash
 - ffmpeg / ffprobe
-- ImageMagick (optional, for advanced image processing)
 
 The script auto-detects and offers to install missing dependencies.
 

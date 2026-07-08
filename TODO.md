@@ -31,6 +31,11 @@ Cross-reference: [README.md](README.md) | [Completed items](DONE.md)
 - [x] Handle aspect-fill: fill rect cropping image preserving aspect ratio
 - [x] Handle scale: stretch image to fill rect exactly
 - [x] Execute ffmpeg command and handle errors
+- [x] Fix coordinate calculation (X uses width, Y uses height)
+- [x] Fix aspect-fit to properly center image in rectangle
+- [x] Add sequence mode for multiple images
+- [x] Add parameter file loading (`--file`)
+- [x] Reduce ffmpeg output verbosity
 
 ## Phase 3: text Command (text overlay)
 
@@ -50,6 +55,7 @@ Cross-reference: [README.md](README.md) | [Completed items](DONE.md)
 - [x] Generate ffmpeg drawtext filter with all options
 - [x] Handle text wrapping within rectangle bounds
 - [x] Execute ffmpeg command and handle errors
+- [x] Add parameter file loading (`--file`)
 
 ## Phase 4: stat Command (file info)
 
@@ -69,8 +75,6 @@ Cross-reference: [README.md](README.md) | [Completed items](DONE.md)
 
 ## Phase 5: Polish & Testing
 
-- [ ] Add error handling for invalid inputs
-- [ ] Add progress indication for long operations
 - [ ] Test on Linux (Ubuntu/Debian)
 - [ ] Test on macOS
 - [ ] Test on WSL

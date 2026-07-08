@@ -31,6 +31,11 @@ Cross-reference: [README.md](README.md) | [Implementation plan](TODO.md)
 - [x] Handle aspect-fill: fill rect cropping image preserving aspect ratio
 - [x] Handle scale: stretch image to fill rect exactly
 - [x] Execute ffmpeg command and handle errors
+- [x] Fixed coordinate calculation (X uses width, Y uses height)
+- [x] Fixed aspect-fit to properly center image in rectangle
+- [x] Added sequence mode for multiple images
+- [x] Added parameter file loading (`--file`)
+- [x] Reduced ffmpeg output verbosity (loglevel warning + stats)
 
 ## Phase 3: text Command (text overlay)
 
@@ -49,6 +54,7 @@ Cross-reference: [README.md](README.md) | [Implementation plan](TODO.md)
 - [x] Parse `--bg-color` parameter: text background color
 - [x] Generate ffmpeg drawtext filter with all options
 - [x] Execute ffmpeg command and handle errors
+- [x] Added parameter file loading (`--file`)
 
 ## Phase 4: stat Command (file info)
 
@@ -71,3 +77,5 @@ Cross-reference: [README.md](README.md) | [Implementation plan](TODO.md)
 - [x] Added examples to --help output
 - [x] Created dedicated help for each subcommand
 - [x] Simplified command names: pic, text, stat
+- [x] Added `--verbose` flag for debugging
+- [x] Added `--file` parameter for loading options from file

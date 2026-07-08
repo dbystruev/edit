@@ -4,8 +4,9 @@ set -euo pipefail
 # edit - A command-line video editing toolkit powered by ffmpeg
 # Repository: https://github.com/dbystruev/edit
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 AUTO_YES=false
+VERBOSE=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -171,7 +172,7 @@ For more information, visit: https://github.com/dbystruev/edit
 EOF
 }
 
-show_insert_picture_help() {
+show_pic_help() {
     cat << 'EOF'
 edit pic - Overlay an image onto a video
 
@@ -195,6 +196,23 @@ OPTIONS:
     --mode MODE     Insert mode: aspect-fit (default), aspect-fill, scale
     --opacity VAL   Opacity: 0.0-1.0 or 0%-100% (default: 1.0)
     --transparent-bg YES/NO  Use image transparency (default: yes)
+    --file FILE     Load additional parameters from file (one option per line)
+
+SEQUENCE MODE:
+    Multiple images can be inserted by specifying them in order. Each image
+    inherits parameters from the previous one unless overridden.
+
+    Example with sequence:
+    edit pic input.mp4 output.mp4 \
+        img1.png --at 0 --rect 10%,10% 40%,40% \
+        img2.png --at 5 --rect 50%,50% 90%,90%
+
+FILE FORMAT:
+    Parameters file (one option per line):
+    --at 10
+    --duration 5
+    --rect 10%,10% 40%,40%
+    --mode aspect-fit
 
 EXAMPLES:
     # Insert logo in top-right corner for 5 seconds
@@ -208,10 +226,13 @@ EXAMPLES:
     # Insert image scaled to fill center area
     edit pic video.mp4 out.mp4 photo.jpg \
         --at 2 --rect 25%,25% 75%,75% --mode aspect-fill
+
+    # Load parameters from file
+    edit pic video.mp4 out.mp4 logo.png --file params.txt
 EOF
 }
 
-show_insert_text_help() {
+show_text_help() {
     cat << 'EOF'
 edit text - Add text overlay to a video
 
@@ -238,6 +259,7 @@ OPTIONS:
     --shadow X:Y:COLOR  Drop shadow offset and color
     --bg-color COLOR  Text background color
     --bg-padding PAD  Background padding in pixels
+    --file FILE     Load additional parameters from file
 
 EXAMPLES:
     # Simple text overlay
@@ -254,7 +276,7 @@ EXAMPLES:
 EOF
 }
 
-show_stats_help() {
+show_stat_help() {
     cat << 'EOF'
 edit stat - Display detailed information about a video or image
 
@@ -272,7 +294,7 @@ DISPLAYED INFO:
     - File size (human readable)
     - Container format
     - Video codec
-    - Resolution (width × height)
+    - Resolution (width x height)
     - Frame rate
     - Duration
     - Total frame count
@@ -286,15 +308,16 @@ EOF
 # Coordinate Parsing
 # ============================================================================
 
-parse_coordinate() {
+# Parse a single coordinate (pixels or percentage)
+# Usage: parse_coord "10%" "3840" => outputs pixel value
+parse_coord() {
     local coord="$1"
-    local video_width="$2"
-    local video_height="$3"
+    local total="$2"
     
     # Check if percentage
     if [[ "$coord" =~ ^([0-9]+\.?[0-9]*)%$ ]]; then
         local pct="${BASH_REMATCH[1]}"
-        echo "$pct"
+        echo "$pct" | awk -v total="$total" '{printf "%.0f", $1/100*total}'
         return 0
     fi
     
@@ -308,6 +331,9 @@ parse_coordinate() {
     return 1
 }
 
+# Parse rectangle string "X1,Y1 X2,Y2" to pixels
+# Usage: parse_rect "10%,10% 40%,40%" "3840" "2160"
+# Returns: x1 y1 x2 y2 width height
 parse_rect() {
     local rect_str="$1"
     local video_width="$2"
@@ -327,18 +353,11 @@ parse_rect() {
     IFS=',' read -r x2 y2 <<< "${corners[1]}"
     
     # Convert percentages to pixels
-    if [[ "$x1" =~ ^([0-9]+\.?[0-9]*)%$ ]]; then
-        x1=$(echo "${BASH_REMATCH[1]} $video_width" | awk '{printf "%.0f", $1/100*$2}')
-    fi
-    if [[ "$y1" =~ ^([0-9]+\.?[0-9]*)%$ ]]; then
-        y1=$(echo "${BASH_REMATCH[1]} $video_height" | awk '{printf "%.0f", $1/100*$2}')
-    fi
-    if [[ "$x2" =~ ^([0-9]+\.?[0-9]*)%$ ]]; then
-        x2=$(echo "${BASH_REMATCH[1]} $video_width" | awk '{printf "%.0f", $1/100*$2}')
-    fi
-    if [[ "$y2" =~ ^([0-9]+\.?[0-9]*)%$ ]]; then
-        y2=$(echo "${BASH_REMATCH[1]} $video_height" | awk '{printf "%.0f", $1/100*$2}')
-    fi
+    # X coordinates use video_width, Y coordinates use video_height
+    x1=$(parse_coord "$x1" "$video_width") || return 1
+    y1=$(parse_coord "$y1" "$video_height") || return 1
+    x2=$(parse_coord "$x2" "$video_width") || return 1
+    y2=$(parse_coord "$y2" "$video_height") || return 1
     
     # Ensure x1,y1 is top-left and x2,y2 is bottom-right
     local min_x=$(( x1 < x2 ? x1 : x2 ))
@@ -346,7 +365,10 @@ parse_rect() {
     local max_x=$(( x1 > x2 ? x1 : x2 ))
     local max_y=$(( y1 > y2 ? y1 : y2 ))
     
-    echo "$min_x $min_y $max_x $max_y"
+    local width=$(( max_x - min_x ))
+    local height=$(( max_y - min_y ))
+    
+    echo "$min_x $min_y $max_x $max_y $width $height"
 }
 
 # ============================================================================
@@ -466,13 +488,46 @@ get_fade_duration() {
 }
 
 # ============================================================================
-# insert-picture Command
+# Parameter File Loading
 # ============================================================================
 
-cmd_insert_picture() {
+# Load parameters from file into an array
+# File format: one option per line (e.g., --at 10, --rect 10%,10% 40%,40%)
+load_params_file() {
+    local file="$1"
+    local -n result_array=$2
+    
+    if [[ ! -f "$file" ]]; then
+        error "Parameter file not found: $file"
+        return 1
+    fi
+    
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        
+        # Trim whitespace
+        line=$(echo "$line" | xargs)
+        
+        # Split line into words
+        local words
+        read -ra words <<< "$line"
+        
+        # Add to result array
+        for word in "${words[@]}"; do
+            result_array+=("$word")
+        done
+    done < "$file"
+}
+
+# ============================================================================
+# pic Command - Insert Picture
+# ============================================================================
+
+cmd_pic() {
     local input=""
     local output=""
-    local picture=""
+    local pictures=()  # Array of picture files
     local at="seconds:0"
     local duration="seconds:3"
     local appear="quick"
@@ -481,11 +536,12 @@ cmd_insert_picture() {
     local mode="aspect-fit"
     local opacity="1.0"
     local transparent_bg="yes"
-
+    local param_file=""
+    
     # Check for help first
     for arg in "$@"; do
         if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_insert_picture_help
+            show_pic_help
             exit 0
         fi
     done
@@ -525,9 +581,13 @@ cmd_insert_picture() {
                 transparent_bg="$2"
                 shift 2
                 ;;
+            --file)
+                param_file="$2"
+                shift 2
+                ;;
             -*)
                 error "Unknown option: $1"
-                show_insert_picture_help
+                show_pic_help
                 exit 1
                 ;;
             *)
@@ -535,22 +595,68 @@ cmd_insert_picture() {
                     input="$1"
                 elif [[ -z "$output" ]]; then
                     output="$1"
-                elif [[ -z "$picture" ]]; then
-                    picture="$1"
                 else
-                    error "Unexpected argument: $1"
-                    exit 1
+                    # This is a picture file
+                    pictures+=("$1")
                 fi
                 shift
                 ;;
         esac
     done
     
+    # Load parameters from file if specified
+    if [[ -n "$param_file" ]]; then
+        local file_params=()
+        load_params_file "$param_file" file_params || exit 1
+        
+        # Re-parse with file parameters
+        set -- "${file_params[@]}"
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --at)
+                    at=$(parse_time "$2") || exit 1
+                    shift 2
+                    ;;
+                --duration)
+                    duration=$(parse_time "$2") || exit 1
+                    shift 2
+                    ;;
+                --appear)
+                    appear="$2"
+                    shift 2
+                    ;;
+                --disappear)
+                    disappear="$2"
+                    shift 2
+                    ;;
+                --rect)
+                    rect="$2 $3"
+                    shift 3
+                    ;;
+                --mode)
+                    mode="$2"
+                    shift 2
+                    ;;
+                --opacity)
+                    opacity=$(parse_opacity "$2") || exit 1
+                    shift 2
+                    ;;
+                --transparent-bg)
+                    transparent_bg="$2"
+                    shift 2
+                    ;;
+                *)
+                    shift
+                    ;;
+            esac
+        done
+    fi
+    
     # Validate required arguments
     local missing=()
     [[ -z "$input" ]] && missing+=("INPUT video file")
     [[ -z "$output" ]] && missing+=("OUTPUT video file")
-    [[ -z "$picture" ]] && missing+=("PICTURE file")
+    [[ ${#pictures[@]} -eq 0 ]] && missing+=("PICTURE file(s)")
     [[ -z "$rect" ]] && missing+=("--rect X1,Y1 X2,Y2")
     
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -559,41 +665,40 @@ cmd_insert_picture() {
             echo "  - $m"
         done
         echo ""
-        show_insert_picture_help
+        show_pic_help
         exit 1
     fi
     
     # Validate input files exist
     [[ ! -f "$input" ]] && error "Input video not found: $input" && exit 1
-    [[ ! -f "$picture" ]] && error "Picture file not found: $picture" && exit 1
+    for pic in "${pictures[@]}"; do
+        [[ ! -f "$pic" ]] && error "Picture file not found: $pic" && exit 1
+    done
     
     # Get video dimensions
-    local width height
-    width=$(get_video_width "$input") || { error "Failed to read video info"; exit 1; }
-    height=$(get_video_height "$input") || { error "Failed to read video info"; exit 1; }
+    local vid_width vid_height
+    vid_width=$(get_video_width "$input") || { error "Failed to read video info"; exit 1; }
+    vid_height=$(get_video_height "$input") || { error "Failed to read video info"; exit 1; }
     
-    if [[ -z "$width" || -z "$height" ]]; then
+    if [[ -z "$vid_width" || -z "$vid_height" ]]; then
         error "Could not determine video dimensions"
         exit 1
     fi
     
-    info "Video: ${width}x${height}"
-    
-    # Parse rectangle coordinates
-    local coords
-    coords=$(parse_rect "$rect" "$width" "$height") || exit 1
-    
-    local x1 y1 x2 y2
-    read -r x1 y1 x2 y2 <<< "$coords"
-    
-    local rect_w=$(( x2 - x1 ))
-    local rect_h=$(( y2 - y1 ))
-    
-    info "Picture area: ${x1},${y1} to ${x2},${y2} (${rect_w}x${rect_h})"
+    info "Video: ${vid_width}x${vid_height}"
     
     # Get video fps
     local fps
     fps=$(get_video_fps "$input")
+    
+    # Parse rectangle coordinates
+    local coords
+    coords=$(parse_rect "$rect" "$vid_width" "$vid_height") || exit 1
+    
+    local x1 y1 x2 y2 rect_w rect_h
+    read -r x1 y1 x2 y2 rect_w rect_h <<< "$coords"
+    
+    info "Picture area: ${x1},${y1} to ${x2},${y2} (${rect_w}x${rect_h})"
     
     # Convert time values to seconds
     local start_seconds duration_seconds
@@ -606,88 +711,94 @@ cmd_insert_picture() {
     fade_out_duration=$(get_fade_duration "$disappear")
     
     info "Start: ${start_seconds}s, Duration: ${duration_seconds}s"
-    info "Fade in: ${fade_in_duration}s, Fade out: ${fade_out_duration}s"
     
-    # Build ffmpeg filter complex
+    # Build ffmpeg filter complex for all pictures
     local filters=""
-    local overlay_opts=""
+    local video_label="[0:v]"
+    local input_count=1
     
-    # Scale picture to fit rectangle
-    case "$mode" in
-        aspect-fit)
-            filters="[1:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0[ovr];"
-            overlay_opts="overlay=${x1}:${y1}"
-            ;;
-        aspect-fill)
-            filters="[1:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=increase,crop=${rect_w}:${rect_h}[ovr];"
-            overlay_opts="overlay=${x1}:${y1}"
-            ;;
-        scale)
-            filters="[1:v]scale=${rect_w}:${rect_h}[ovr];"
-            overlay_opts="overlay=${x1}:${y1}"
-            ;;
-        *)
-            error "Unknown mode: $mode (use aspect-fit, aspect-fill, or scale)"
-            exit 1
-            ;;
-    esac
-    
-    # Add fade effects
-    local end_seconds
-    end_seconds=$(echo "$start_seconds $duration_seconds" | awk '{printf "%.6f", $1 + $2}')
-    
-    if [[ "$fade_in_duration" != "0" ]]; then
-        filters+="[ovr]fade=t=in:st=0:d=${fade_in_duration}[ovr];"
-    fi
-    
-    if [[ "$fade_out_duration" != "0" ]]; then
-        local fade_out_start
-        fade_out_start=$(echo "$duration_seconds $fade_out_duration" | awk '{printf "%.6f", $1 - $2}')
-        if [[ "$fade_in_duration" != "0" ]]; then
-            filters="${filters%[ovr];}[ovr]fade=t=out:st=${fade_out_start}:d=${fade_out_duration}[ovr];"
-        else
-            filters+="[ovr]fade=t=out:st=${fade_out_start}:d=${fade_out_duration}[ovr];"
+    for pic in "${pictures[@]}"; do
+        local pic_label="[${input_count}:v]"
+        local ovr_label="[ovr${input_count}]"
+        local next_video_label="[v${input_count}]"
+        
+        # Scale picture to fit rectangle
+        case "$mode" in
+            aspect-fit)
+                filters+="${pic_label}scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease${ovr_label};"
+                ;;
+            aspect-fill)
+                filters+="${pic_label}scale=${rect_w}:${rect_h}:force_original_aspect_ratio=increase,crop=${rect_w}:${rect_h}${ovr_label};"
+                ;;
+            scale)
+                filters+="${pic_label}scale=${rect_w}:${rect_h}${ovr_label};"
+                ;;
+            *)
+                error "Unknown mode: $mode (use aspect-fit, aspect-fill, or scale)"
+                exit 1
+                ;;
+        esac
+        
+        # Apply fade effects
+        if [[ "$fade_in_duration" != "0" || "$fade_out_duration" != "0" ]]; then
+            local fade_filter=""
+            if [[ "$fade_in_duration" != "0" ]]; then
+                fade_filter+="fade=t=in:st=0:d=${fade_in_duration}"
+            fi
+            if [[ "$fade_out_duration" != "0" ]]; then
+                local fade_out_start
+                fade_out_start=$(echo "$duration_seconds $fade_out_duration" | awk '{printf "%.6f", $1 - $2}')
+                [[ -n "$fade_filter" ]] && fade_filter+=","
+                fade_filter+="fade=t=out:st=${fade_out_start}:d=${fade_out_duration}"
+            fi
+            filters+="${ovr_label}${fade_filter}${ovr_label};"
         fi
-    fi
-    
-    # Handle transparency for PNG/GIF
-    if [[ "$transparent_bg" == "yes" ]]; then
-        if [[ "$picture" =~ \.(png|gif)$ ]]; then
-            overlay_opts+=",format=rgba"
+        
+        # Apply opacity
+        if [[ "$opacity" != "1.0" ]]; then
+            filters+="${ovr_label}colorchannelmixer=aa=${opacity}${ovr_label};"
         fi
-    fi
+        
+        # Overlay onto video
+        local end_seconds
+        end_seconds=$(echo "$start_seconds $duration_seconds" | awk '{printf "%.6f", $1 + $2}')
+        filters+="${video_label}${ovr_label}overlay=${x1}:${y1}:enable='between(t,${start_seconds},${end_seconds})'${next_video_label};"
+        video_label="${next_video_label}"
+        
+        input_count=$((input_count + 1))
+    done
     
-    # Apply opacity
-    if [[ "$opacity" != "1.0" ]]; then
-        if [[ "$filters" == *"[ovr];"* ]]; then
-            filters="${filters%[ovr];}[ovr]colorchannelmixer=aa=${opacity}[ovr];"
-        else
-            filters+="[1:v]colorchannelmixer=aa=${opacity}[ovr];"
-        fi
-    fi
+    # Remove trailing semicolon and set final output label
+    filters="${filters%;}"
     
-    # Final overlay filter
-    filters+="[0:v][ovr]${overlay_opts}:enable='between(t,${start_seconds},${end_seconds})'[out]"
+    # Build input arguments
+    local input_args=()
+    input_args+=(-i "$input")
+    for pic in "${pictures[@]}"; do
+        input_args+=(-i "$pic")
+    done
     
     # Execute ffmpeg
-    info "Processing..."
+    info "Processing ${#pictures[@]} image(s)..."
     
     local ffmpeg_cmd=(
         ffmpeg -y
-        -i "$input"
-        -i "$picture"
+        "${input_args[@]}"
         -filter_complex "$filters"
-        -map "[out]"
+        -map "${video_label}"
         -map "0:a?"
         -c:a copy
+        -loglevel warning
+        -stats
         "$output"
     )
     
-    if [[ "$AUTO_YES" == "true" ]]; then
-        "${ffmpeg_cmd[@]}" 2>&1 | tail -5
-    else
-        "${ffmpeg_cmd[@]}"
+    if [[ "$VERBOSE" == "true" ]]; then
+        ffmpeg_cmd[7]="-loglevel" 
+        ffmpeg_cmd[8]="info"
     fi
+    
+    "${ffmpeg_cmd[@]}"
     
     if [[ $? -eq 0 ]]; then
         success "Created: $output"
@@ -698,10 +809,10 @@ cmd_insert_picture() {
 }
 
 # ============================================================================
-# insert-text Command
+# text Command - Insert Text
 # ============================================================================
 
-cmd_insert_text() {
+cmd_text() {
     local input=""
     local output=""
     local text=""
@@ -719,11 +830,12 @@ cmd_insert_text() {
     local shadow=""
     local bg_color=""
     local bg_padding="0"
+    local param_file=""
 
     # Check for help first
     for arg in "$@"; do
         if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_insert_text_help
+            show_text_help
             exit 0
         fi
     done
@@ -787,9 +899,13 @@ cmd_insert_text() {
                 bg_padding="$2"
                 shift 2
                 ;;
+            --file)
+                param_file="$2"
+                shift 2
+                ;;
             -*)
                 error "Unknown option: $1"
-                show_insert_text_help
+                show_text_help
                 exit 1
                 ;;
             *)
@@ -808,6 +924,78 @@ cmd_insert_text() {
         esac
     done
     
+    # Load parameters from file if specified
+    if [[ -n "$param_file" ]]; then
+        local file_params=()
+        load_params_file "$param_file" file_params || exit 1
+        
+        # Re-parse with file parameters
+        set -- "${file_params[@]}"
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --at)
+                    at=$(parse_time "$2") || exit 1
+                    shift 2
+                    ;;
+                --duration)
+                    duration=$(parse_time "$2") || exit 1
+                    shift 2
+                    ;;
+                --appear)
+                    appear="$2"
+                    shift 2
+                    ;;
+                --disappear)
+                    disappear="$2"
+                    shift 2
+                    ;;
+                --rect)
+                    rect="$2 $3"
+                    shift 3
+                    ;;
+                --color)
+                    color="$2"
+                    shift 2
+                    ;;
+                --size)
+                    size="$2"
+                    shift 2
+                    ;;
+                --font)
+                    font="$2"
+                    shift 2
+                    ;;
+                --bold)
+                    bold=true
+                    shift
+                    ;;
+                --italic)
+                    italic=true
+                    shift
+                    ;;
+                --outline)
+                    outline="$2"
+                    shift 2
+                    ;;
+                --shadow)
+                    shadow="$2"
+                    shift 2
+                    ;;
+                --bg-color)
+                    bg_color="$2"
+                    shift 2
+                    ;;
+                --bg-padding)
+                    bg_padding="$2"
+                    shift 2
+                    ;;
+                *)
+                    shift
+                    ;;
+            esac
+        done
+    fi
+    
     # Validate required arguments
     local missing=()
     [[ -z "$input" ]] && missing+=("INPUT video file")
@@ -821,7 +1009,7 @@ cmd_insert_text() {
             echo "  - $m"
         done
         echo ""
-        show_insert_text_help
+        show_text_help
         exit 1
     fi
     
@@ -841,7 +1029,7 @@ cmd_insert_text() {
     coords=$(parse_rect "$rect" "$width" "$height") || exit 1
     
     local x1 y1 x2 y2
-    read -r x1 y1 x2 y2 <<< "$coords"
+    read -r x1 y1 x2 y2 _ _ <<< "$coords"
     
     local rect_w=$(( x2 - x1 ))
     local rect_h=$(( y2 - y1 ))
@@ -877,10 +1065,7 @@ cmd_insert_text() {
     fi
     
     # Position - center in rectangle
-    local text_x text_y
-    text_x=$(( x1 + rect_w / 2 ))
-    text_y=$(( y1 + rect_h / 2 ))
-    drawtext_opts+=":x=(w-text_w)/2:y=(h-text_h)/2"
+    drawtext_opts+=":x=${x1}+(${rect_w}-text_w)/2:y=${y1}+(${rect_h}-text_h)/2"
     
     # Text box / background
     if [[ -n "$bg_color" ]]; then
@@ -904,7 +1089,7 @@ cmd_insert_text() {
     end_seconds=$(echo "$start_seconds $duration_seconds" | awk '{printf "%.6f", $1 + $2}')
     drawtext_opts+=":enable='between(t,${start_seconds},${end_seconds})'"
     
-    # Build filter chain with fade effects
+    # Build filter chain
     local filters="[0:v]drawtext=${drawtext_opts}[out]"
     
     # Execute ffmpeg
@@ -917,14 +1102,17 @@ cmd_insert_text() {
         -map "[out]"
         -map "0:a?"
         -c:a copy
+        -loglevel warning
+        -stats
         "$output"
     )
     
-    if [[ "$AUTO_YES" == "true" ]]; then
-        "${ffmpeg_cmd[@]}" 2>&1 | tail -5
-    else
-        "${ffmpeg_cmd[@]}"
+    if [[ "$VERBOSE" == "true" ]]; then
+        ffmpeg_cmd[6]="-loglevel"
+        ffmpeg_cmd[7]="info"
     fi
+    
+    "${ffmpeg_cmd[@]}"
     
     if [[ $? -eq 0 ]]; then
         success "Created: $output"
@@ -935,10 +1123,10 @@ cmd_insert_text() {
 }
 
 # ============================================================================
-# stats Command
+# stat Command - Display Info
 # ============================================================================
 
-cmd_stats() {
+cmd_stat() {
     local input=""
     local json_output=false
     local short_output=false
@@ -946,7 +1134,7 @@ cmd_stats() {
     # Check for help first
     for arg in "$@"; do
         if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_stats_help
+            show_stat_help
             exit 0
         fi
     done
@@ -964,7 +1152,7 @@ cmd_stats() {
                 ;;
             -*)
                 error "Unknown option: $1"
-                show_stats_help
+                show_stat_help
                 exit 1
                 ;;
             *)
@@ -983,7 +1171,7 @@ cmd_stats() {
     if [[ -z "$input" ]]; then
         error "Missing required argument: INPUT file"
         echo ""
-        show_stats_help
+        show_stat_help
         exit 1
     fi
     
@@ -1003,16 +1191,6 @@ cmd_stats() {
         size_human=$(numfmt --to=iec-i --suffix=B "$file_size" 2>/dev/null || echo "${file_size} bytes")
     else
         size_human="unknown"
-    fi
-    
-    # Check if it's a video or image
-    local media_type
-    media_type=$(ffprobe -v quiet -show_entries format=format_name \
-        -of csv=p=0 "$input" 2>/dev/null | head -1)
-    
-    # Check for image formats
-    if [[ "$input" =~ \.(jpg|jpeg|png|gif|bmp|tiff|webp)$ ]]; then
-        media_type="image"
     fi
     
     if [[ "$json_output" == "true" ]]; then
@@ -1076,11 +1254,11 @@ EOF
         
         if [[ "$duration" != "N/A" ]]; then
             # Convert seconds to HH:MM:SS
-            local hours minutes seconds
+            local hours minutes seconds_val
             hours=$(echo "$duration" | awk '{printf "%02d", int($1/3600)}')
             minutes=$(echo "$duration" | awk '{printf "%02d", int($1/60)%60}')
-            seconds=$(echo "$duration" | awk '{printf "%06.3f", $1%60}')
-            echo -e " ${GREEN}Duration:${NC}     ${hours}:${minutes}:${seconds} ($duration s)"
+            seconds_val=$(echo "$duration" | awk '{printf "%06.3f", $1%60}')
+            echo -e " ${GREEN}Duration:${NC}     ${hours}:${minutes}:${seconds_val} ($duration s)"
         fi
         
         if [[ "$frames" != "N/A" ]]; then
@@ -1137,6 +1315,10 @@ main() {
                 echo "edit version $VERSION"
                 exit 0
                 ;;
+            --verbose)
+                VERBOSE=true
+                shift
+                ;;
             *)
                 break
                 ;;
@@ -1152,13 +1334,13 @@ main() {
     
     case "$command" in
         pic|picture|image)
-            cmd_insert_picture "$@"
+            cmd_pic "$@"
             ;;
         text)
-            cmd_insert_text "$@"
+            cmd_text "$@"
             ;;
         stat|stats)
-            cmd_stats "$@"
+            cmd_stat "$@"
             ;;
         *)
             error "Unknown command: $command"
