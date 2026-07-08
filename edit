@@ -198,12 +198,14 @@ OPTIONS:
     --file FILE     Load additional parameters from file (one option per line)
 
 SEQUENCE MODE:
-    Multiple images can be inserted by specifying them in order.
+    Multiple images can be inserted with per-image parameters.
+    Each image gets its own --at, --duration, and --rect.
 
-    Example:
+    Syntax:
     edit pic input.mp4 output.mp4 \
         img1.png --at 0 --rect 10%,10% 40%,40% \
-        img2.png --at 5 --rect 50%,50% 90%,90%
+        img2.png --at 5 --rect 50%,50% 90%,90% \
+        img3.png --at 10 --duration 5 --rect 25%,25% 75%,75%
 
 EXAMPLES:
     # Insert logo in top-right corner for 5 seconds
@@ -505,14 +507,18 @@ load_params_file() {
 cmd_pic() {
     local input=""
     local output=""
-    local pictures=()
+    local pictures=()      # Array of picture files
+    local pic_ats=()       # Array of start times per picture
+    local pic_durations=() # Array of durations per picture
+    local pic_rects=()     # Array of rectangles per picture
+    local global_mode="aspect-fit"
+    local global_opacity="1.0"
+    local global_transparent_bg="yes"
+    
+    # Default values for new pictures
     local at="seconds:0"
     local duration="seconds:3"
     local rect=""
-    local mode="aspect-fit"
-    local opacity="1.0"
-    local transparent_bg="yes"
-    local param_file=""
     
     # Check for help first
     for arg in "$@"; do
@@ -522,7 +528,8 @@ cmd_pic() {
         fi
     done
     
-    # Parse arguments
+    # Parse arguments - support per-image parameters
+    # Syntax: edit pic input.mp4 output.mp4 img1.png --at 0 --rect ... img2.png --at 5 --rect ...
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose)
@@ -542,19 +549,15 @@ cmd_pic() {
                 shift 3
                 ;;
             --mode)
-                mode="$2"
+                global_mode="$2"
                 shift 2
                 ;;
             --opacity)
-                opacity=$(parse_opacity "$2") || exit 1
+                global_opacity=$(parse_opacity "$2") || exit 1
                 shift 2
                 ;;
             --transparent-bg)
-                transparent_bg="$2"
-                shift 2
-                ;;
-            --file)
-                param_file="$2"
+                global_transparent_bg="$2"
                 shift 2
                 ;;
             -*)
@@ -563,35 +566,47 @@ cmd_pic() {
                 exit 1
                 ;;
             *)
-                if [[ -z "$input" ]]; then
+                # Check if this looks like an image file
+                if [[ "$1" =~ \.(jpg|jpeg|png|gif|bmp|tiff|webp)$ ]]; then
+                    # Save previous picture's parameters if any
+                    if [[ ${#pictures[@]} -gt 0 ]]; then
+                        local last_idx=$(( ${#pictures[@]} - 1 ))
+                        # Fill in defaults for unset parameters
+                        [[ -z "${pic_ats[$last_idx]}" ]] && pic_ats[$last_idx]="$at"
+                        [[ -z "${pic_durations[$last_idx]}" ]] && pic_durations[$last_idx]="$duration"
+                        [[ -z "${pic_rects[$last_idx]}" ]] && pic_rects[$last_idx]="$rect"
+                    fi
+                    
+                    # Add new picture
+                    pictures+=("$1")
+                    pic_ats+=("")   # Will be filled later
+                    pic_durations+=("")
+                    pic_rects+=("")
+                    
+                    # Reset per-picture defaults for this picture
+                    at="seconds:0"
+                    duration="seconds:3"
+                    rect=""
+                elif [[ -z "$input" ]]; then
                     input="$1"
                 elif [[ -z "$output" ]]; then
                     output="$1"
                 else
-                    pictures+=("$1")
+                    error "Unexpected argument: $1"
+                    show_pic_help
+                    exit 1
                 fi
                 shift
                 ;;
         esac
     done
     
-    # Load parameters from file if specified
-    if [[ -n "$param_file" ]]; then
-        local file_params=()
-        load_params_file "$param_file" file_params || exit 1
-        
-        set -- "${file_params[@]}"
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
-                --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
-                --rect) rect="$2 $3"; shift 3 ;;
-                --mode) mode="$2"; shift 2 ;;
-                --opacity) opacity=$(parse_opacity "$2") || exit 1; shift 2 ;;
-                --transparent-bg) transparent_bg="$2"; shift 2 ;;
-                *) shift ;;
-            esac
-        done
+    # Save last picture's parameters
+    if [[ ${#pictures[@]} -gt 0 ]]; then
+        local last_idx=$(( ${#pictures[@]} - 1 ))
+        [[ -z "${pic_ats[$last_idx]}" ]] && pic_ats[$last_idx]="$at"
+        [[ -z "${pic_durations[$last_idx]}" ]] && pic_durations[$last_idx]="$duration"
+        [[ -z "${pic_rects[$last_idx]}" ]] && pic_rects[$last_idx]="$rect"
     fi
     
     # Validate required arguments
@@ -599,7 +614,13 @@ cmd_pic() {
     [[ -z "$input" ]] && missing+=("INPUT video file")
     [[ -z "$output" ]] && missing+=("OUTPUT video file")
     [[ ${#pictures[@]} -eq 0 ]] && missing+=("PICTURE file(s)")
-    [[ -z "$rect" ]] && missing+=("--rect X1,Y1 X2,Y2")
+    
+    # Check that all pictures have rectangles
+    for i in "${!pictures[@]}"; do
+        if [[ -z "${pic_rects[$i]}" ]]; then
+            missing+=("--rect for ${pictures[$i]}")
+        fi
+    done
     
     if [[ ${#missing[@]} -gt 0 ]]; then
         error "Missing required arguments:"
@@ -633,22 +654,6 @@ cmd_pic() {
     local fps
     fps=$(get_video_fps "$input")
     
-    # Parse rectangle coordinates
-    local coords
-    coords=$(parse_rect "$rect" "$vid_width" "$vid_height") || exit 1
-    
-    local x1 y1 x2 y2 rect_w rect_h
-    read -r x1 y1 x2 y2 rect_w rect_h <<< "$coords"
-    
-    info "Picture area: ${x1},${y1} to ${x2},${y2} (${rect_w}x${rect_h})"
-    
-    # Convert time values to seconds
-    local start_seconds duration_seconds
-    start_seconds=$(time_to_seconds "$at" "$fps")
-    duration_seconds=$(time_to_seconds "$duration" "$fps")
-    
-    info "Start: ${start_seconds}s, Duration: ${duration_seconds}s"
-    
     # Build input arguments
     local input_args=()
     input_args+=(-i "$input")
@@ -656,17 +661,39 @@ cmd_pic() {
         input_args+=(-i "$pic")
     done
     
-    # Build filter complex
+    # Build filter complex with per-image parameters
     local filters=""
     local last_label="[0:v]"
     local input_idx=1
     
-    for pic in "${pictures[@]}"; do
+    for i in "${!pictures[@]}"; do
         local pic_idx=$input_idx
-        local ovr_label="[ovr]"
+        local pic_at="${pic_ats[$i]}"
+        local pic_duration="${pic_durations[$i]}"
+        local pic_rect="${pic_rects[$i]}"
+        
+        # Parse this picture's rectangle
+        local coords
+        coords=$(parse_rect "$pic_rect" "$vid_width" "$vid_height") || exit 1
+        
+        local x1 y1 x2 y2 rect_w rect_h
+        read -r x1 y1 x2 y2 rect_w rect_h <<< "$coords"
+        
+        # Convert time values to seconds
+        local start_seconds duration_seconds
+        start_seconds=$(time_to_seconds "$pic_at" "$fps")
+        duration_seconds=$(time_to_seconds "$pic_duration" "$fps")
+        
+        local end_seconds
+        end_seconds=$(echo "$start_seconds $duration_seconds" | awk '{printf "%.6f", $1 + $2}')
+        
+        info "${pictures[$i]}: at=${start_seconds}s, duration=${duration_seconds}s, rect=${x1},${y1}-${x2},${y2}"
+        
+        # Use unique label for each overlay
+        local ovr_label="[ovr${i}]"
         
         # Scale and format the picture
-        case "$mode" in
+        case "$global_mode" in
             aspect-fit)
                 filters+="[${pic_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba${ovr_label};"
                 ;;
@@ -677,19 +704,15 @@ cmd_pic() {
                 filters+="[${pic_idx}:v]scale=${rect_w}:${rect_h},format=rgba${ovr_label};"
                 ;;
             *)
-                error "Unknown mode: $mode (use aspect-fit, aspect-fill, or scale)"
+                error "Unknown mode: $global_mode (use aspect-fit, aspect-fill, or scale)"
                 exit 1
                 ;;
         esac
         
         # Apply opacity
-        if [[ "$opacity" != "1.0" ]]; then
-            filters+="${ovr_label}colorchannelmixer=aa=${opacity}[ovr];"
+        if [[ "$global_opacity" != "1.0" ]]; then
+            filters+="${ovr_label}colorchannelmixer=aa=${global_opacity}${ovr_label};"
         fi
-        
-        # Calculate enable timing
-        local end_seconds
-        end_seconds=$(echo "$start_seconds $duration_seconds" | awk '{printf "%.6f", $1 + $2}')
         
         # Overlay onto video with enable timing
         local next_label="[v${input_idx}]"
