@@ -515,7 +515,7 @@ cmd_pic() {
     local global_opacity="1.0"
     local global_transparent_bg="yes"
     
-    # Default values for new pictures
+    # Inherited values for new pictures (start with defaults, then inherit from previous)
     local at="seconds:0"
     local duration="seconds:3"
     local rect=""
@@ -529,7 +529,8 @@ cmd_pic() {
     done
     
     # Parse arguments - support per-image parameters
-    # Syntax: edit pic input.mp4 output.mp4 img1.png --at 0 --rect ... img2.png --at 5 --rect ...
+    # Each image inherits parameters from the previous one
+    # Syntax: edit pic input.mp4 output.mp4 img1.png --at 0 --rect ... img2.png --at 5 ...
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose)
@@ -568,25 +569,11 @@ cmd_pic() {
             *)
                 # Check if this looks like an image file
                 if [[ "$1" =~ \.(jpg|jpeg|png|gif|bmp|tiff|webp)$ ]]; then
-                    # Save previous picture's parameters if any
-                    if [[ ${#pictures[@]} -gt 0 ]]; then
-                        local last_idx=$(( ${#pictures[@]} - 1 ))
-                        # Fill in defaults for unset parameters
-                        [[ -z "${pic_ats[$last_idx]}" ]] && pic_ats[$last_idx]="$at"
-                        [[ -z "${pic_durations[$last_idx]}" ]] && pic_durations[$last_idx]="$duration"
-                        [[ -z "${pic_rects[$last_idx]}" ]] && pic_rects[$last_idx]="$rect"
-                    fi
-                    
-                    # Add new picture
+                    # Add new picture with current inherited parameters
                     pictures+=("$1")
-                    pic_ats+=("")   # Will be filled later
-                    pic_durations+=("")
-                    pic_rects+=("")
-                    
-                    # Reset per-picture defaults for this picture
-                    at="seconds:0"
-                    duration="seconds:3"
-                    rect=""
+                    pic_ats+=("$at")
+                    pic_durations+=("$duration")
+                    pic_rects+=("$rect")
                 elif [[ -z "$input" ]]; then
                     input="$1"
                 elif [[ -z "$output" ]]; then
@@ -600,14 +587,6 @@ cmd_pic() {
                 ;;
         esac
     done
-    
-    # Save last picture's parameters
-    if [[ ${#pictures[@]} -gt 0 ]]; then
-        local last_idx=$(( ${#pictures[@]} - 1 ))
-        [[ -z "${pic_ats[$last_idx]}" ]] && pic_ats[$last_idx]="$at"
-        [[ -z "${pic_durations[$last_idx]}" ]] && pic_durations[$last_idx]="$duration"
-        [[ -z "${pic_rects[$last_idx]}" ]] && pic_rects[$last_idx]="$rect"
-    fi
     
     # Validate required arguments
     local missing=()
