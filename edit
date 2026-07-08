@@ -529,6 +529,10 @@ cmd_pic() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
             --at)
                 at=$(parse_time "$2") || exit 1
                 shift 2
@@ -806,6 +810,10 @@ cmd_text() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
             --at)
                 at=$(parse_time "$2") || exit 1
                 shift 2
