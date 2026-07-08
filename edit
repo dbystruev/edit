@@ -143,8 +143,9 @@ USAGE:
 
 OPTIONS:
     -h, --help          Show this help message
+    -v, --verbose       Show verbose/debug output
     -y, --yes           Auto-confirm all prompts
-    -v, --version       Show version
+    -V, --version       Show version
 
 COMMANDS:
     pic                 Overlay an image onto a video
@@ -163,8 +164,8 @@ EXAMPLES:
     # Get video stats (supports multiple files and wildcards)
     edit stat input.mp4 *.jpeg
 
-    # Auto-confirm all prompts
-    edit -y pic input.mp4 output.mp4 logo.png --at 0 --rect 0,0 100%,100%
+    # Debug mode
+    edit -v pic input.mp4 output.mp4 logo.png --at 0 --rect 0,0 100%,100%
 
 RUN WITHOUT ARGUMENTS to see this help.
 
@@ -734,6 +735,12 @@ cmd_pic() {
     # Execute ffmpeg
     info "Processing ${#pictures[@]} image(s)..."
     
+    if [[ "$VERBOSE" == "true" ]]; then
+        info "Filter complex:"
+        echo "$filters" | sed 's/;/;\n/g'
+        echo ""
+    fi
+    
     local ffmpeg_cmd=(
         ffmpeg -y
         "${input_args[@]}"
@@ -747,6 +754,9 @@ cmd_pic() {
     )
     
     if [[ "$VERBOSE" == "true" ]]; then
+        info "FFmpeg command:"
+        echo "${ffmpeg_cmd[@]}" | sed 's/ -/ \\\n  -/g'
+        echo ""
         ffmpeg_cmd[7]="-loglevel"
         ffmpeg_cmd[8]="info"
     fi
@@ -1003,6 +1013,12 @@ cmd_text() {
     # Execute ffmpeg
     info "Processing..."
     
+    if [[ "$VERBOSE" == "true" ]]; then
+        info "Filter:"
+        echo "$filters" | sed 's/:/:\n  /g'
+        echo ""
+    fi
+    
     local ffmpeg_cmd=(
         ffmpeg -y
         -i "$input"
@@ -1016,6 +1032,9 @@ cmd_text() {
     )
     
     if [[ "$VERBOSE" == "true" ]]; then
+        info "FFmpeg command:"
+        echo "${ffmpeg_cmd[@]}" | sed 's/ -/ \\\n  -/g'
+        echo ""
         ffmpeg_cmd[6]="-loglevel"
         ffmpeg_cmd[7]="info"
     fi
@@ -1230,11 +1249,11 @@ main() {
                 AUTO_YES=true
                 shift
                 ;;
-            -v|--version)
+            -V|--version)
                 echo "edit version $VERSION"
                 exit 0
                 ;;
-            --verbose)
+            -v|--verbose)
                 VERBOSE=true
                 shift
                 ;;
