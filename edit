@@ -233,6 +233,9 @@ show_text_help() {
     cat << 'EOF'
 edit text - Add text overlay to a video
 
+REQUIRES: ffmpeg with libfreetype (drawtext filter)
+  macOS: brew reinstall ffmpeg
+
 USAGE:
     edit text INPUT OUTPUT TEXT [OPTIONS]
 
@@ -834,8 +837,6 @@ cmd_text() {
     local text=""
     local at="seconds:0"
     local duration="seconds:3"
-    local appear="quick"
-    local disappear="quick"
     local rect=""
     local color="white"
     local size="48"
@@ -855,6 +856,14 @@ cmd_text() {
             exit 0
         fi
     done
+    
+    # Check if drawtext filter is available
+    if ! ffmpeg -filters 2>/dev/null | grep -q drawtext; then
+        error "drawtext filter not available in your ffmpeg installation."
+        error "On macOS, reinstall ffmpeg with: brew reinstall ffmpeg"
+        error "Or install: brew install ffmpeg --with-freetype"
+        exit 1
+    fi
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
