@@ -576,44 +576,45 @@ time_to_seconds() {
     local time_str="$1"
     local fps="${2:-}"
     
+    # Handle negative values
+    local abs_time="$time_str"
+    [[ "$time_str" =~ ^- ]] && abs_time="${time_str#-}"
+    
+    local seconds=0
+    
     # Internal format
-    [[ "$time_str" =~ ^seconds:([0-9]+\.?[0-9]*)$ ]] && echo "${BASH_REMATCH[1]}" && return 0
-    if [[ "$time_str" =~ ^frame:([0-9]+\.?[0-9]*)$ ]]; then
-        [[ -n "$fps" ]] && echo "${BASH_REMATCH[1]}" | awk -v fps="$fps" '{printf "%.6f", $1/fps}' || echo "${BASH_REMATCH[1]}"
-        return 0
-    fi
-    
+    if [[ "$abs_time" =~ ^seconds:([0-9]+\.?[0-9]*)$ ]]; then
+        seconds="${BASH_REMATCH[1]}"
+    # Internal frame format
+    elif [[ "$abs_time" =~ ^frame:([0-9]+\.?[0-9]*)$ ]]; then
+        [[ -n "$fps" ]] && seconds=$(echo "${BASH_REMATCH[1]}" | awk -v fps="$fps" '{printf "%.6f", $1/fps}') || seconds="${BASH_REMATCH[1]}"
     # Frame number (f prefix)
-    if [[ "$time_str" =~ ^f([0-9]+\.?[0-9]*)$ ]]; then
-        [[ -n "$fps" ]] && echo "${BASH_REMATCH[1]}" | awk -v fps="$fps" '{printf "%.6f", $1/fps}' || echo "${BASH_REMATCH[1]}"
-        return 0
-    fi
-    
+    elif [[ "$abs_time" =~ ^f([0-9]+\.?[0-9]*)$ ]]; then
+        [[ -n "$fps" ]] && seconds=$(echo "${BASH_REMATCH[1]}" | awk -v fps="$fps" '{printf "%.6f", $1/fps}') || seconds="${BASH_REMATCH[1]}"
     # Hours:Minutes:Seconds
-    if [[ "$time_str" =~ ^([0-9]+):([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
-        echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]}" | awk '{printf "%.6f", $1*3600 + $2*60 + $3}'
-        return 0
-    fi
-    
+    elif [[ "$abs_time" =~ ^([0-9]+):([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
+        seconds=$(echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]}" | awk '{printf "%.6f", $1*3600 + $2*60 + $3}')
     # Minutes:Seconds
-    if [[ "$time_str" =~ ^([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
-        echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" | awk '{printf "%.6f", $1*60 + $2}'
-        return 0
+    elif [[ "$abs_time" =~ ^([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
+        seconds=$(echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" | awk '{printf "%.6f", $1*60 + $2}')
+    # Plain seconds
+    elif [[ "$abs_time" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        seconds="$abs_time"
+    else
+        error "Invalid time: $time_str"
+        return 1
     fi
     
-    # Seconds
-    if [[ "$time_str" =~ ^[0-9]+\.?[0-9]*$ ]]; then
-        echo "$time_str"
-        return 0
-    fi
-    
-    error "Invalid time: $time_str"
-    return 1
+    echo "$seconds"
 }
 
 parse_time() {
     local time_str="$1"
+    # Already in internal format
+    [[ "$time_str" =~ ^(seconds:|frame:) ]] && echo "$time_str" && return 0
+    # Frame number (f prefix)
     [[ "$time_str" =~ ^f([0-9]+\.?[0-9]*)$ ]] && echo "frame:${BASH_REMATCH[1]}" && return 0
+    # Convert to seconds
     local seconds
     seconds=$(time_to_seconds "$time_str") || return 1
     echo "seconds:$seconds"
@@ -1128,10 +1129,10 @@ cmd_crop() {
 
     local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
     local cmd=(ffmpeg -y -loglevel "$loglevel")
+    # Both -ss and -to must be before -i for correct behavior
     [[ -n "$from_sec" ]] && cmd+=(-ss "$from_sec")
-    cmd+=(-i "$input")
     [[ -n "$to_sec" ]] && cmd+=(-to "$to_sec")
-    cmd+=(-c copy -stats "$output")
+    cmd+=(-i "$input" -c copy -stats "$output")
 
     "${cmd[@]}" && success "Created: $output" || error "Failed"
 }
