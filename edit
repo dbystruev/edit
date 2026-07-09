@@ -575,7 +575,7 @@ cmd_text() {
     local texts=() text_ats=() text_durations=() text_rects=()
     local text_colors=() text_sizes=() text_fonts=() text_bolds=() text_outlines=() text_bg_colors=()
     local at="seconds:0" duration="seconds:3" rect=""
-    local color="white" size="768" font="" bold=false outline="" bg_color=""
+    local color="white" size="384" font="" bold=false outline="" bg_color=""
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_text_help && exit 0; done
 
@@ -689,6 +689,31 @@ cmd_text() {
     for i in "${!texts[@]}"; do [[ -z "${text_rects[$i]}" ]] && error "Missing --rect for '${texts[$i]}'" && exit 1; done
     [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
 
+    # Sort texts by --at time using bubble sort
+    local n=${#texts[@]}
+    for ((i=0; i<n; i++)); do
+        for ((j=i+1; j<n; j++)); do
+            local ti="${text_ats[$i]}" tj="${text_ats[$j]}"
+            # Convert to seconds for comparison
+            local si=$(time_to_seconds "$ti" 2>/dev/null || echo "0")
+            local sj=$(time_to_seconds "$tj" 2>/dev/null || echo "0")
+            if (( $(echo "$sj < $si" | bc -l 2>/dev/null || echo 0) )); then
+                # Swap all arrays
+                local tmp
+                tmp="${texts[$i]}"; texts[$i]="${texts[$j]}"; texts[$j]="$tmp"
+                tmp="${text_ats[$i]}"; text_ats[$i]="${text_ats[$j]}"; text_ats[$j]="$tmp"
+                tmp="${text_durations[$i]}"; text_durations[$i]="${text_durations[$j]}"; text_durations[$j]="$tmp"
+                tmp="${text_rects[$i]}"; text_rects[$i]="${text_rects[$j]}"; text_rects[$j]="$tmp"
+                tmp="${text_colors[$i]}"; text_colors[$i]="${text_colors[$j]}"; text_colors[$j]="$tmp"
+                tmp="${text_sizes[$i]}"; text_sizes[$i]="${text_sizes[$j]}"; text_sizes[$j]="$tmp"
+                tmp="${text_fonts[$i]}"; text_fonts[$i]="${text_fonts[$j]}"; text_fonts[$j]="$tmp"
+                tmp="${text_bolds[$i]}"; text_bolds[$i]="${text_bolds[$j]}"; text_bolds[$j]="$tmp"
+                tmp="${text_outlines[$i]}"; text_outlines[$i]="${text_outlines[$j]}"; text_outlines[$j]="$tmp"
+                tmp="${text_bg_colors[$i]}"; text_bg_colors[$i]="${text_bg_colors[$j]}"; text_bg_colors[$j]="$tmp"
+            fi
+        done
+    done
+
     local width height fps
     width=$(get_video_width "$input") || exit 1
     height=$(get_video_height "$input") || exit 1
@@ -732,20 +757,27 @@ cmd_text() {
             [[ "$txt_bold" == "true" ]] && magick_args+=("-weight" "Bold")
             [[ -n "$use_font" ]] && magick_args+=("-font" "$use_font")
 
-            # Word wrap
-            local wrapped="$txt"
-            if [[ ${#txt} -gt 60 ]]; then
-                wrapped=""; local line=""
-                for word in $txt; do
-                    [[ ${#line} -gt 0 ]] && line="$line "
-                    if [[ $((${#line} + ${#word})) -gt 60 ]]; then
-                        wrapped="${wrapped}${line}\n"; line="$word"
-                    else
-                        line="${line}${word}"
-                    fi
-                done
-                [[ -n "$line" ]] && wrapped="${wrapped}${line}"
-            fi
+            # Word wrap based on actual text width in pixels
+            local wrapped=""
+            local line=""
+            for word in $txt; do
+                local test_line="${line}${line:+ }${word}"
+                # Measure width of this line at current size
+                local test_img="${tmp_dir}/measure_$$.png"
+                $magick_cmd -size 1x1 xc:none "${magick_args[@]}" -pointsize "$txt_size" \
+                    -annotate +0+0 "$test_img" 2>/dev/null
+                local bbox=$($magick_cmd identify -format "%w" "$test_img" 2>/dev/null || echo "0")
+                rm -f "$test_img"
+                
+                if [[ -n "$bbox" && "$bbox" -gt "$txt_w" && -n "$line" ]]; then
+                    # Word exceeds width, start new line
+                    wrapped="${wrapped}${line}\n"
+                    line="$word"
+                else
+                    line="$test_line"
+                fi
+            done
+            [[ -n "$line" ]] && wrapped="${wrapped}${line}"
 
             # Auto-scale font
             local test_size=$txt_size
