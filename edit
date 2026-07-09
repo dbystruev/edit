@@ -772,7 +772,6 @@ cmd_text() {
             [[ -n "$use_font" ]] && font_name="$use_font"
             
             # Word wrap: break at spaces, never cut words
-            # Calculate approximate chars per line based on font size and width
             local char_width=$(( txt_size * 7 / 10 ))
             [[ $char_width -lt 1 ]] && char_width=1
             local max_chars=$(( txt_w * 10 / char_width ))
@@ -782,7 +781,6 @@ cmd_text() {
             local line=""
             for word in $txt; do
                 if [[ ${#line} -gt 0 && $((${#line} + ${#word} + 1)) -gt $max_chars ]]; then
-                    # Line would be too long, start new line
                     [[ -n "$wrapped" ]] && wrapped="${wrapped}\n"
                     wrapped="${wrapped}${line}"
                     line="$word"
@@ -799,12 +797,23 @@ cmd_text() {
             local canvas_h=$(( num_lines * txt_size * 13 / 10 ))
             [[ $canvas_h -lt $txt_h ]] && canvas_h=$txt_h
             
-            # Create canvas and draw centered text
-            eval $magick_cmd -size "${txt_w}x${canvas_h}" xc:white \
+            # Create canvas with text color background, draw text in contrast color, then make background transparent
+            # This ensures text color is correct
+            eval $magick_cmd -size "${txt_w}x${canvas_h}" xc:"'${txt_color}'" \
                 -font "'${font_name}'" -pointsize ${txt_size} \
-                -fill black -gravity center \
+                -fill white -gravity center \
                 -annotate +0+0 "'$(echo -e "$wrapped")'" \
-                -transparent white "'${tmp_img}'" 2>/dev/null
+                -fuzz 1% -transparent white "'${tmp_img}'" 2>/dev/null
+            
+            # If that didn't work (white text on white bg), try black text approach
+            if [[ ! -f "$tmp_img" ]]; then
+                eval $magick_cmd -size "${txt_w}x${canvas_h}" xc:white \
+                    -font "'${font_name}'" -pointsize ${txt_size} \
+                    -fill black -gravity center \
+                    -annotate +0+0 "'$(echo -e "$wrapped")'" \
+                    -fuzz 1% -transparent white \
+                    -fill "'${txt_color}'" -opaque black "'${tmp_img}'" 2>/dev/null
+            fi
             
             [[ ! -f "$tmp_img" ]] && error "Failed to create text image $i" && exit 1
             local img_size=$($magick_cmd identify -format "%wx%h" "$tmp_img" 2>/dev/null || echo "?")
