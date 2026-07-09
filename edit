@@ -798,13 +798,17 @@ cmd_text() {
             [[ -n "$wrapped" ]] && num_lines=$(echo -e "$wrapped" | wc -l)
             local canvas_h=$(( num_lines * txt_size * 14 / 10 ))
             
+            # Make canvas wider to allow text overflow (2x width)
+            local canvas_w=$(( txt_w * 2 ))
+            
             # Create text image with proper alpha channel
             local font_flag=""
             [[ -n "$use_font" ]] && font_flag="-font '${use_font}'"
             
             # Create text on black background, make black transparent, output as PNG32
+            # Canvas is wider than rectangle to allow text overflow
             eval $magick_cmd \
-                -size "${txt_w}x${canvas_h}" xc:black \
+                -size "${canvas_w}x${canvas_h}" xc:black \
                 ${font_flag} \
                 -pointsize ${txt_size} \
                 -fill white \
