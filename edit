@@ -345,9 +345,33 @@ USAGE:
     edit cut INPUT OUTPUT [OPTIONS]
 
 OPTIONS:
-    --from TIME     Start of section to remove
-    --to TIME       End of section to remove
+    --from TIME     Start of section to remove (or keep start if only --to given)
+    --to TIME       End of section to remove (or keep end if only --from given)
     -v, --verbose   Show verbose output
+
+TIME FORMATS:
+    10          seconds
+    10.5        seconds with decimal
+    3:45        minutes:seconds
+    2:03:45     hours:minutes:seconds
+    f180        frame number
+    -10         negative = from end of clip
+
+EXAMPLES:
+    # Remove section from 15s to 25s
+    edit cut input.mp4 output.mp4 --from 15 --to 25
+
+    # Remove from 1m30s to 2m15s
+    edit cut input.mp4 output.mp4 --from 1:30 --to 2:15
+
+    # Keep only first 30 seconds (remove from 30s to end)
+    edit cut input.mp4 output.mp4 --to 30
+
+    # Keep only last 30 seconds (remove from start to -30s)
+    edit cut input.mp4 output.mp4 --from -30
+
+    # Remove frames 100 to 200
+    edit cut input.mp4 output.mp4 --from f100 --to f200
 EOF
 }
 
@@ -1085,6 +1109,48 @@ cmd_crop() {
 # cut Command
 # ============================================================================
 
+# Parse time value: supports seconds, MM:SS, HH:MM:SS, fXXX (frames), negative values
+# Returns seconds as float
+parse_time_value() {
+    local time_str="$1"
+    local fps="$2"
+    local duration="$3"
+    
+    # Handle negative values (from end of clip)
+    local negative=false
+    local abs_time="$time_str"
+    if [[ "$time_str" =~ ^- ]]; then
+        negative=true
+        abs_time="${time_str#-}"
+    fi
+    
+    local seconds=0
+    
+    # Frame number (fXXX)
+    if [[ "$abs_time" =~ ^f([0-9]+\.?[0-9]*)$ ]]; then
+        seconds=$(echo "${BASH_REMATCH[1]}" | awk -v fps="$fps" '{printf "%.6f", $1/fps}')
+    # HH:MM:SS
+    elif [[ "$abs_time" =~ ^([0-9]+):([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
+        seconds=$(echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]}" | awk '{printf "%.6f", $1*3600 + $2*60 + $3}')
+    # MM:SS
+    elif [[ "$abs_time" =~ ^([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
+        seconds=$(echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" | awk '{printf "%.6f", $1*60 + $2}')
+    # Plain seconds
+    elif [[ "$abs_time" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        seconds="$abs_time"
+    else
+        error "Invalid time format: $time_str"
+        return 1
+    fi
+    
+    # Convert negative values (from end of clip)
+    if [[ "$negative" == "true" ]]; then
+        seconds=$(echo "$duration $seconds" | awk '{printf "%.6f", $1 - $2}')
+    fi
+    
+    echo "$seconds"
+}
+
 cmd_cut() {
     local input="" output="" from_time="" to_time=""
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_cut_help && exit 0; done
@@ -1095,15 +1161,29 @@ cmd_cut() {
     [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
     [[ -z "$from_time" && -z "$to_time" ]] && error "Specify --from and/or --to" && exit 1
 
+    # Get video info for time conversion
+    local vid_duration vid_fps
+    vid_duration=$(get_duration "$input")
+    vid_fps=$(get_video_fps "$input")
+    
+    # Convert time values to seconds
+    local from_sec="" to_sec=""
+    [[ -n "$from_time" ]] && from_sec=$(parse_time_value "$from_time" "$vid_fps" "$vid_duration")
+    [[ -n "$to_time" ]] && to_sec=$(parse_time_value "$to_time" "$vid_fps" "$vid_duration")
+    
     local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
     local filter=""
-    if [[ -n "$from_time" && -n "$to_time" ]]; then
-        filter="[0:v]trim=start=0:end=${from_time},setpts=PTS-STARTPTS[v1];[0:v]trim=start=${to_time},setpts=PTS-STARTPTS[v2];[v1][v2]concat=n=2:v=1:a=0[vout];"
-        filter+="[0:a]atrim=start=0:end=${from_time}[a1];[0:a]atrim=start=${to_time}[a2];[a1][a2]concat=n=2:v=0:a=1[aout]"
-    elif [[ -n "$to_time" ]]; then
-        filter="[0:v]trim=start=${to_time},setpts=PTS-STARTPTS[vout];[0:a]atrim=start=${to_time}[aout]"
+    
+    if [[ -n "$from_sec" && -n "$to_sec" ]]; then
+        # Cut middle section
+        filter="[0:v]trim=start=0:end=${from_sec},setpts=PTS-STARTPTS[v1];[0:v]trim=start=${to_sec},setpts=PTS-STARTPTS[v2];[v1][v2]concat=n=2:v=1:a=0[vout];"
+        filter+="[0:a]atrim=start=0:end=${from_sec},asetpts=PTS-STARTPTS[a1];[0:a]atrim=start=${to_sec},asetpts=PTS-STARTPTS[a2];[a1][a2]concat=n=2:v=0:a=1[aout]"
+    elif [[ -n "$to_sec" ]]; then
+        # Cut from start to to_time
+        filter="[0:v]trim=start=${to_sec},setpts=PTS-STARTPTS[vout];[0:a]atrim=start=${to_sec},asetpts=PTS-STARTPTS[aout]"
     else
-        filter="[0:v]trim=start=0:end=${from_time},setpts=PTS-STARTPTS[vout];[0:a]atrim=start=0:end=${from_time}[aout]"
+        # Cut from start to from_time
+        filter="[0:v]trim=start=0:end=${from_sec},setpts=PTS-STARTPTS[vout];[0:a]atrim=start=0:end=${from_sec},asetpts=PTS-STARTPTS[aout]"
     fi
 
     ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filter" -map "[vout]" -map "[aout]" -stats "$output" && success "Created: $output" || error "Failed"
