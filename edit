@@ -1021,8 +1021,18 @@ cmd_text() {
     
     info "Start: ${start_seconds}s, Duration: ${duration_seconds}s"
     
+    # Escape text for ffmpeg drawtext filter
+    # Replace special chars: ' -> \', : -> \:, \ -> \\, etc.
+    local escaped_text="$text"
+    escaped_text="${escaped_text//\\/\\\\}"    # Backslash first
+    escaped_text="${escaped_text//\'/\\\'}"    # Single quotes
+    escaped_text="${escaped_text//:/\\:}"      # Colons (filter separator)
+    escaped_text="${escaped_text//;/\\;}"      # Semicolons
+    escaped_text="${escaped_text//[/\\[}"      # Brackets
+    escaped_text="${escaped_text//]/\\]}"      # Brackets
+    
     # Build drawtext filter
-    local drawtext_opts="text='${text}'"
+    local drawtext_opts="text='${escaped_text}'"
     drawtext_opts+=":fontsize=${size}"
     drawtext_opts+=":fontcolor=${color}"
     
