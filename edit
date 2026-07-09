@@ -546,13 +546,29 @@ cmd_pic() {
 cmd_text() {
     local input="" output="" text="" at="seconds:0" duration="seconds:3"
     local rect="" color="white" size="48" font="" bold=false outline="" bg_color=""
+    local raw_at="0" raw_duration="3"  # Store raw values for passing to cmd_pic
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_text_help && exit 0; done
 
-    local has_drawtext=false has_magick=false
+    local has_drawtext=false has_magick=false magick_cmd=""
     ffmpeg -filters 2>/dev/null | grep -q drawtext && has_drawtext=true
-    command -v convert &>/dev/null && has_magick=true
-    command -v magick &>/dev/null && has_magick=true
+    
+    # Check for ImageMagick in common locations
+    for cmd in convert magick; do
+        if command -v "$cmd" &>/dev/null; then
+            has_magick=true
+            magick_cmd="$cmd"
+            break
+        fi
+        # Check Homebrew paths
+        for path in /opt/homebrew/bin /usr/local/bin; do
+            if [[ -x "$path/$cmd" ]]; then
+                has_magick=true
+                magick_cmd="$path/$cmd"
+                break 2
+            fi
+        done
+    done
 
     if [[ "$has_drawtext" == "false" && "$has_magick" == "false" ]]; then
         error "Need ffmpeg drawtext or ImageMagick. Install: brew install imagemagick"
@@ -562,8 +578,8 @@ cmd_text() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose) VERBOSE=true; shift ;;
-            --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
-            --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
+            --at) raw_at="$2"; at=$(parse_time "$2") || exit 1; shift 2 ;;
+            --duration) raw_duration="$2"; duration=$(parse_time "$2") || exit 1; shift 2 ;;
             --rect) rect="$2 $3"; shift 3 ;;
             --color) color="$2"; shift 2 ;;
             --size) size="$2"; shift 2 ;;
@@ -599,21 +615,49 @@ cmd_text() {
     # ImageMagick fallback
     if [[ "$has_drawtext" == "false" ]]; then
         info "Using ImageMagick fallback..."
-        local tmp_img=$(mktemp /tmp/edit_text_XXXXXX.png)
-        trap "rm -f '$tmp_img'" EXIT
+        local tmp_img="/tmp/edit_text_$$.png"
 
-        local magick_cmd="convert"
-        command -v magick &>/dev/null && magick_cmd="magick"
+        # Find a usable font
+        local use_font=""
+        if [[ -n "$font" ]]; then
+            use_font="$font"
+        else
+            # Try common macOS/Linux fonts
+            for f in \
+                "/Library/Fonts/Arial Unicode.ttf" \
+                "/System/Library/Fonts/Supplemental/Arial.ttf" \
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" \
+                "/usr/share/fonts/TTF/DejaVuSans.ttf" \
+                "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf"; do
+                if [[ -f "$f" ]]; then
+                    use_font="$f"
+                    break
+                fi
+            done
+        fi
 
-        local opts="-size ${rect_w}x${rect_h} xc:none -fill ${color} -pointsize ${size} -gravity center"
-        [[ "$bold" == "true" ]] && opts+=" -weight Bold"
-        [[ -n "$font" ]] && opts+=" -font '$font'"
+        local -a magick_args=("-size" "${rect_w}x${rect_h}" "xc:none" "-fill" "${color}" "-pointsize" "${size}" "-gravity" "center")
+        [[ "$bold" == "true" ]] && magick_args+=("-weight" "Bold")
+        [[ -n "$use_font" ]] && magick_args+=("-font" "$use_font")
 
-        eval $magick_cmd $opts -annotate +0+0 "\"${text}\"" "\"$tmp_img\"" 2>/dev/null
+        $magick_cmd "${magick_args[@]}" -annotate +0+0 "${text}" "$tmp_img" 2>/dev/null
+        
+        if [[ ! -f "$tmp_img" ]]; then
+            error "Failed to create text image with ImageMagick"
+            error "Try installing fonts: brew install font-dejavu-sans"
+            exit 1
+        fi
+        
+        info "Text image created: $tmp_img"
 
-        cmd_pic "$input" "$output" "$tmp_img" --at "$at" --duration "$duration" --rect "$rect"
+        # Pass options BEFORE the picture file so they get parsed correctly
+        # Split rect into two parts for cmd_pic
+        local rect_part1 rect_part2
+        read -r rect_part1 rect_part2 <<< "$rect"
+        cmd_pic "$input" "$output" --at "$raw_at" --duration "$raw_duration" --rect "$rect_part1" "$rect_part2" "$tmp_img"
+        local result=$?
         rm -f "$tmp_img"
-        return
+        return $result
     fi
 
     # drawtext filter
