@@ -797,23 +797,23 @@ cmd_text() {
             local canvas_h=$(( num_lines * txt_size * 13 / 10 ))
             [[ $canvas_h -lt $txt_h ]] && canvas_h=$txt_h
             
-            # Create canvas with text color background, draw text in contrast color, then make background transparent
-            # This ensures text color is correct
-            eval $magick_cmd -size "${txt_w}x${canvas_h}" xc:"'${txt_color}'" \
-                -font "'${font_name}'" -pointsize ${txt_size} \
-                -fill white -gravity center \
-                -annotate +0+0 "'$(echo -e "$wrapped")'" \
-                -fuzz 1% -transparent white "'${tmp_img}'" 2>/dev/null
+            # Create text image with proper alpha channel
+            # Use PNG32 format to ensure RGB color space
             
-            # If that didn't work (white text on white bg), try black text approach
-            if [[ ! -f "$tmp_img" ]]; then
-                eval $magick_cmd -size "${txt_w}x${canvas_h}" xc:white \
-                    -font "'${font_name}'" -pointsize ${txt_size} \
-                    -fill black -gravity center \
-                    -annotate +0+0 "'$(echo -e "$wrapped")'" \
-                    -fuzz 1% -transparent white \
-                    -fill "'${txt_color}'" -opaque black "'${tmp_img}'" 2>/dev/null
-            fi
+            local font_flag=""
+            [[ -n "$use_font" ]] && font_flag="-font '${use_font}'"
+            
+            # Create text on black background, make black transparent, output as PNG32
+            eval $magick_cmd \
+                -size "${txt_w}x${canvas_h}" xc:black \
+                ${font_flag} \
+                -pointsize ${txt_size} \
+                -fill white \
+                -gravity center \
+                -annotate +0+0 "'$(echo -e "$wrapped")'" \
+                -fuzz 10% \
+                -transparent black \
+                PNG32:"'${tmp_img}'" 2>/dev/null
             
             [[ ! -f "$tmp_img" ]] && error "Failed to create text image $i" && exit 1
             local img_size=$($magick_cmd identify -format "%wx%h" "$tmp_img" 2>/dev/null || echo "?")
