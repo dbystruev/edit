@@ -689,27 +689,25 @@ cmd_text() {
     for i in "${!texts[@]}"; do [[ -z "${text_rects[$i]}" ]] && error "Missing --rect for '${texts[$i]}'" && exit 1; done
     [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
 
-    # Sort texts by --at time using bubble sort
+    # Sort texts by --at time
     local n=${#texts[@]}
-    for ((i=0; i<n; i++)); do
-        for ((j=i+1; j<n; j++)); do
-            local ti="${text_ats[$i]}" tj="${text_ats[$j]}"
-            # Convert to seconds for comparison
-            local si=$(time_to_seconds "$ti" 2>/dev/null || echo "0")
-            local sj=$(time_to_seconds "$tj" 2>/dev/null || echo "0")
-            if (( $(echo "$sj < $si" | bc -l 2>/dev/null || echo 0) )); then
-                # Swap all arrays
+    for ((i=0; i<n-1; i++)); do
+        for ((j=0; j<n-i-1; j++)); do
+            local si=$(time_to_seconds "${text_ats[$j]}" 2>/dev/null)
+            local sj=$(time_to_seconds "${text_ats[$j+1]}" 2>/dev/null)
+            if [[ "$(echo "$sj < $si" | bc -l 2>/dev/null)" == "1" ]]; then
+                # Swap
                 local tmp
-                tmp="${texts[$i]}"; texts[$i]="${texts[$j]}"; texts[$j]="$tmp"
-                tmp="${text_ats[$i]}"; text_ats[$i]="${text_ats[$j]}"; text_ats[$j]="$tmp"
-                tmp="${text_durations[$i]}"; text_durations[$i]="${text_durations[$j]}"; text_durations[$j]="$tmp"
-                tmp="${text_rects[$i]}"; text_rects[$i]="${text_rects[$j]}"; text_rects[$j]="$tmp"
-                tmp="${text_colors[$i]}"; text_colors[$i]="${text_colors[$j]}"; text_colors[$j]="$tmp"
-                tmp="${text_sizes[$i]}"; text_sizes[$i]="${text_sizes[$j]}"; text_sizes[$j]="$tmp"
-                tmp="${text_fonts[$i]}"; text_fonts[$i]="${text_fonts[$j]}"; text_fonts[$j]="$tmp"
-                tmp="${text_bolds[$i]}"; text_bolds[$i]="${text_bolds[$j]}"; text_bolds[$j]="$tmp"
-                tmp="${text_outlines[$i]}"; text_outlines[$i]="${text_outlines[$j]}"; text_outlines[$j]="$tmp"
-                tmp="${text_bg_colors[$i]}"; text_bg_colors[$i]="${text_bg_colors[$j]}"; text_bg_colors[$j]="$tmp"
+                tmp="${texts[$j]}"; texts[$j]="${texts[$((j+1))]}"; texts[$((j+1))]="$tmp"
+                tmp="${text_ats[$j]}"; text_ats[$j]="${text_ats[$((j+1))]}"; text_ats[$((j+1))]="$tmp"
+                tmp="${text_durations[$j]}"; text_durations[$j]="${text_durations[$((j+1))]}"; text_durations[$((j+1))]="$tmp"
+                tmp="${text_rects[$j]}"; text_rects[$j]="${text_rects[$((j+1))]}"; text_rects[$((j+1))]="$tmp"
+                tmp="${text_colors[$j]}"; text_colors[$j]="${text_colors[$((j+1))]}"; text_colors[$((j+1))]="$tmp"
+                tmp="${text_sizes[$j]}"; text_sizes[$j]="${text_sizes[$((j+1))]}"; text_sizes[$((j+1))]="$tmp"
+                tmp="${text_fonts[$j]}"; text_fonts[$j]="${text_fonts[$((j+1))]}"; text_fonts[$((j+1))]="$tmp"
+                tmp="${text_bolds[$j]}"; text_bolds[$j]="${text_bolds[$((j+1))]}"; text_bolds[$((j+1))]="$tmp"
+                tmp="${text_outlines[$j]}"; text_outlines[$j]="${text_outlines[$((j+1))]}"; text_outlines[$((j+1))]="$tmp"
+                tmp="${text_bg_colors[$j]}"; text_bg_colors[$j]="${text_bg_colors[$((j+1))]}"; text_bg_colors[$((j+1))]="$tmp"
             fi
         done
     done
@@ -757,29 +755,25 @@ cmd_text() {
             [[ "$txt_bold" == "true" ]] && magick_args+=("-weight" "Bold")
             [[ -n "$use_font" ]] && magick_args+=("-font" "$use_font")
 
-            # Word wrap based on actual text width in pixels
+            # Simple word wrap - break lines that would be too long
+            # Estimate ~8 pixels per character at given font size
+            local max_chars=$(( txt_w * 10 / (txt_size * 6) ))
+            [[ $max_chars -lt 10 ]] && max_chars=10
+
             local wrapped=""
             local line=""
             for word in $txt; do
-                local test_line="${line}${line:+ }${word}"
-                # Measure width of this line at current size
-                local test_img="${tmp_dir}/measure_$$.png"
-                $magick_cmd -size 1x1 xc:none "${magick_args[@]}" -pointsize "$txt_size" \
-                    -annotate +0+0 "$test_img" 2>/dev/null
-                local bbox=$($magick_cmd identify -format "%w" "$test_img" 2>/dev/null || echo "0")
-                rm -f "$test_img"
-                
-                if [[ -n "$bbox" && "$bbox" -gt "$txt_w" && -n "$line" ]]; then
-                    # Word exceeds width, start new line
+                if [[ ${#line} -gt 0 && $((${#line} + ${#word} + 1)) -gt $max_chars ]]; then
                     wrapped="${wrapped}${line}\n"
                     line="$word"
                 else
-                    line="$test_line"
+                    [[ -n "$line" ]] && line="$line "
+                    line="${line}${word}"
                 fi
             done
             [[ -n "$line" ]] && wrapped="${wrapped}${line}"
 
-            # Auto-scale font
+            # Auto-scale font to fit
             local test_size=$txt_size
             local tmp_test="${tmp_dir}/test_${i}.png"
             while [[ $test_size -gt 32 ]]; do
