@@ -575,7 +575,7 @@ cmd_text() {
     local texts=() text_ats=() text_durations=() text_rects=()
     local text_colors=() text_sizes=() text_fonts=() text_bolds=() text_outlines=() text_bg_colors=()
     local at="seconds:0" duration="seconds:3" rect=""
-    local color="white" size="384" font="" bold=false outline="" bg_color=""
+    local color="white" size="256" font="" bold=false outline="" bg_color=""
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_text_help && exit 0; done
 
@@ -689,25 +689,34 @@ cmd_text() {
     for i in "${!texts[@]}"; do [[ -z "${text_rects[$i]}" ]] && error "Missing --rect for '${texts[$i]}'" && exit 1; done
     [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
 
-    # Sort texts by --at time
+    # Sort texts by --at time (bubble sort)
     local n=${#texts[@]}
     for ((i=0; i<n-1; i++)); do
         for ((j=0; j<n-i-1; j++)); do
-            local si=$(time_to_seconds "${text_ats[$j]}" 2>/dev/null)
-            local sj=$(time_to_seconds "${text_ats[$j+1]}" 2>/dev/null)
-            if [[ "$(echo "$sj < $si" | bc -l 2>/dev/null)" == "1" ]]; then
-                # Swap
-                local tmp
-                tmp="${texts[$j]}"; texts[$j]="${texts[$((j+1))]}"; texts[$((j+1))]="$tmp"
-                tmp="${text_ats[$j]}"; text_ats[$j]="${text_ats[$((j+1))]}"; text_ats[$((j+1))]="$tmp"
-                tmp="${text_durations[$j]}"; text_durations[$j]="${text_durations[$((j+1))]}"; text_durations[$((j+1))]="$tmp"
-                tmp="${text_rects[$j]}"; text_rects[$j]="${text_rects[$((j+1))]}"; text_rects[$((j+1))]="$tmp"
-                tmp="${text_colors[$j]}"; text_colors[$j]="${text_colors[$((j+1))]}"; text_colors[$((j+1))]="$tmp"
-                tmp="${text_sizes[$j]}"; text_sizes[$j]="${text_sizes[$((j+1))]}"; text_sizes[$((j+1))]="$tmp"
-                tmp="${text_fonts[$j]}"; text_fonts[$j]="${text_fonts[$((j+1))]}"; text_fonts[$((j+1))]="$tmp"
-                tmp="${text_bolds[$j]}"; text_bolds[$j]="${text_bolds[$((j+1))]}"; text_bolds[$((j+1))]="$tmp"
-                tmp="${text_outlines[$j]}"; text_outlines[$j]="${text_outlines[$((j+1))]}"; text_outlines[$((j+1))]="$tmp"
-                tmp="${text_bg_colors[$j]}"; text_bg_colors[$j]="${text_bg_colors[$((j+1))]}"; text_bg_colors[$((j+1))]="$tmp"
+            local si=$(time_to_seconds "${text_ats[$j]}" 2>/dev/null || echo "0")
+            local sj=$(time_to_seconds "${text_ats[$((j+1))]}" 2>/dev/null || echo "0")
+            local should_swap=$(echo "$sj < $si" | bc -l 2>/dev/null || echo "0")
+            if [[ "$should_swap" == "1" ]]; then
+                # Store all values from position j first
+                local t0="${texts[$j]}" a0="${text_ats[$j]}" d0="${text_durations[$j]}"
+                local r0="${text_rects[$j]}" c0="${text_colors[$j]}" s0="${text_sizes[$j]}"
+                local f0="${text_fonts[$j]}" b0="${text_bolds[$j]}" o0="${text_outlines[$j]}"
+                local bg0="${text_bg_colors[$j]}"
+                # Get values from position j+1
+                local t1="${texts[$((j+1))]}" a1="${text_ats[$((j+1))]}"
+                local d1="${text_durations[$((j+1))]}" r1="${text_rects[$((j+1))]}"
+                local c1="${text_colors[$((j+1))]}" s1="${text_sizes[$((j+1))]}"
+                local f1="${text_fonts[$((j+1))]}" b1="${text_bolds[$((j+1))]}"
+                local o1="${text_outlines[$((j+1))]}" bg1="${text_bg_colors[$((j+1))]}"
+                # Now assign swapped values
+                texts[$j]="$t1"; text_ats[$j]="$a1"; text_durations[$j]="$d1"
+                text_rects[$j]="$r1"; text_colors[$j]="$c1"; text_sizes[$j]="$s1"
+                text_fonts[$j]="$f1"; text_bolds[$j]="$b1"; text_outlines[$j]="$o1"
+                text_bg_colors[$j]="$bg1"
+                texts[$((j+1))]="$t0"; text_ats[$((j+1))]="$a0"; text_durations[$((j+1))]="$d0"
+                text_rects[$((j+1))]="$r0"; text_colors[$((j+1))]="$c0"; text_sizes[$((j+1))]="$s0"
+                text_fonts[$((j+1))]="$f0"; text_bolds[$((j+1))]="$b0"; text_outlines[$((j+1))]="$o0"
+                text_bg_colors[$((j+1))]="$bg0"
             fi
         done
     done
@@ -756,8 +765,10 @@ cmd_text() {
             [[ -n "$use_font" ]] && magick_args+=("-font" "$use_font")
 
             # Simple word wrap - break lines that would be too long
-            # Estimate ~8 pixels per character at given font size
-            local max_chars=$(( txt_w * 10 / (txt_size * 6) ))
+            # Estimate ~0.6 * font_size pixels per character, use 70% of width for safety
+            local char_width=$(( txt_size * 6 / 10 ))
+            [[ $char_width -lt 1 ]] && char_width=1
+            local max_chars=$(( txt_w * 7 / 10 / char_width ))
             [[ $max_chars -lt 10 ]] && max_chars=10
 
             local wrapped=""
