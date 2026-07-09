@@ -491,9 +491,27 @@ cmd_pic() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose) VERBOSE=true; shift ;;
-            --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
-            --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
-            --rect) rect="$2 $3"; shift 3 ;;
+            --at)
+                at=$(parse_time "$2") || exit 1
+                if [[ ${#pictures[@]} -gt 0 ]]; then
+                    local last=$((${#pictures[@]} - 1))
+                    pic_ats[$last]="$at"
+                fi
+                shift 2 ;;
+            --duration)
+                duration=$(parse_time "$2") || exit 1
+                if [[ ${#pictures[@]} -gt 0 ]]; then
+                    local last=$((${#pictures[@]} - 1))
+                    pic_durations[$last]="$duration"
+                fi
+                shift 2 ;;
+            --rect)
+                rect="$2 $3"
+                if [[ ${#pictures[@]} -gt 0 ]]; then
+                    local last=$((${#pictures[@]} - 1))
+                    pic_rects[$last]="$rect"
+                fi
+                shift 3 ;;
             --mode) global_mode="$2"; shift 2 ;;
             --opacity) global_opacity=$(parse_opacity "$2") || exit 1; shift 2 ;;
             --file) param_file="$2"; shift 2 ;;
@@ -579,25 +597,77 @@ cmd_text() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose) VERBOSE=true; shift ;;
-            --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
-            --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
-            --rect) rect="$2 $3"; shift 3 ;;
-            --color) color="$2"; shift 2 ;;
-            --size) size="$2"; shift 2 ;;
-            --font) font="$2"; shift 2 ;;
-            --bold) bold=true; shift ;;
-            --outline) outline="$2"; shift 2 ;;
-            --bg-color) bg_color="$2"; shift 2 ;;
+            --at)
+                at=$(parse_time "$2") || exit 1
+                # If texts exist, update last text's --at
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    local last=$((${#texts[@]} - 1))
+                    text_ats[$last]="$at"
+                fi
+                shift 2 ;;
+            --duration)
+                duration=$(parse_time "$2") || exit 1
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    local last=$((${#texts[@]} - 1))
+                    text_durations[$last]="$duration"
+                fi
+                shift 2 ;;
+            --rect)
+                rect="$2 $3"
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    local last=$((${#texts[@]} - 1))
+                    text_rects[$last]="$rect"
+                fi
+                shift 3 ;;
+            --color)
+                color="$2"
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    local last=$((${#texts[@]} - 1))
+                    text_colors[$last]="$color"
+                fi
+                shift 2 ;;
+            --size)
+                size="$2"
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    local last=$((${#texts[@]} - 1))
+                    text_sizes[$last]="$size"
+                fi
+                shift 2 ;;
+            --font)
+                font="$2"
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    local last=$((${#texts[@]} - 1))
+                    text_fonts[$last]="$font"
+                fi
+                shift 2 ;;
+            --bold)
+                bold=true
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    local last=$((${#texts[@]} - 1))
+                    text_bolds[$last]="$bold"
+                fi
+                shift ;;
+            --outline)
+                outline="$2"
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    local last=$((${#texts[@]} - 1))
+                    text_outlines[$last]="$outline"
+                fi
+                shift 2 ;;
+            --bg-color)
+                bg_color="$2"
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    local last=$((${#texts[@]} - 1))
+                    text_bg_colors[$last]="$bg_color"
+                fi
+                shift 2 ;;
             -*) error "Unknown: $1"; exit 1 ;;
             *)
-                # Check if this looks like input/output (no spaces, not starting with special chars)
-                # Text can have spaces and special chars, so we detect input/output first
                 if [[ -z "$input" ]]; then
                     input="$1"
                 elif [[ -z "$output" ]]; then
                     output="$1"
                 else
-                    # This is a text string - add it with current parameters
                     texts+=("$1")
                     text_ats+=("$at")
                     text_durations+=("$duration")
