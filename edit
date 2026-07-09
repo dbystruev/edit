@@ -4,7 +4,7 @@ set -euo pipefail
 # edit - A command-line video editing toolkit powered by ffmpeg
 # Repository: https://github.com/dbystruev/edit
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 AUTO_YES=false
 VERBOSE=false
 
@@ -157,21 +157,22 @@ COMMANDS:
     audio               Replace or mix audio at a timestamp
     resize              Resize video dimensions
 
-EXAMPLES:
-    # Crop video from 10s to 30s
-    edit crop input.mp4 output.mp4 --from 10 --to 30
+TIME FORMATS:
+    10          seconds
+    10.5        seconds with decimal
+    3:45        minutes:seconds
+    2:03:45     hours:minutes:seconds
+    f120        frame number
 
-    # Cut (remove) section from 15s to 25s
-    edit cut input.mp4 output.mp4 --from 15 --to 25
+EXAMPLES:
+    # Crop video from 1m30s to 3m45s
+    edit crop input.mp4 output.mp4 --from 1:30 --to 3:45
 
     # Insert video2 at 10s into video1
     edit insert video1.mp4 video2.mp4 output.mp4 --at 10
 
-    # Replace audio from 5s with another file
-    edit audio input.mp4 output.mp4 new_audio.mp3 --at 5 --duration 10
-
-    # Resize to 1280x720
-    edit resize input.mp4 output.mp4 --width 1280 --height 720
+    # Resize to 720p width
+    edit resize input.mp4 output.mp4 --width 1280
 
 RUN WITHOUT ARGUMENTS to see this help.
 
@@ -195,37 +196,17 @@ OPTIONS:
     --at TIME       Start time (default: 0)
     --duration TIME Duration (default: 3)
     --rect X1,Y1 X2,Y2  Rectangle coordinates for picture placement
-
-TIME FORMATS:
-    10          seconds
-    10.5        seconds with decimal
-    3:45        minutes:seconds
-    2:03:45     hours:minutes:seconds
-    f120        frame number
-                    Format: pixels (100,100 500,400) or percentages (10%,10% 90%,90%)
     --mode MODE     Insert mode: aspect-fit (default), aspect-fill, scale
     --opacity VAL   Opacity: 0.0-1.0 or 0%-100% (default: 1.0)
-    --transparent-bg YES/NO  Use image transparency (default: yes)
-    --file FILE     Load additional parameters from file (one option per line)
+    -v, --verbose   Show verbose output
 
 SEQUENCE MODE:
-    Multiple images can be inserted with per-image parameters.
-    Each image gets its own --at, --duration, and --rect.
+    Each image inherits parameters from the previous one.
+    Options after an image update that image's parameters.
 
-    Syntax:
     edit pic input.mp4 output.mp4 \
         img1.png --at 0 --rect 10%,10% 40%,40% \
-        img2.png --at 5 --rect 50%,50% 90%,90% \
-        img3.png --at 10 --duration 5 --rect 25%,25% 75%,75%
-
-EXAMPLES:
-    # Insert logo in top-right corner for 5 seconds
-    edit pic video.mp4 out.mp4 logo.png \
-        --at 10 --duration 5 --rect 80%,5% 95%,25%
-
-    # Insert image scaled to fill center area
-    edit pic video.mp4 out.mp4 photo.jpg \
-        --at 2 --rect 25%,25% 75%,75% --mode aspect-fill
+        img2.png --at 5 --rect 50%,50% 90%,90%
 EOF
 }
 
@@ -233,8 +214,9 @@ show_text_help() {
     cat << 'EOF'
 edit text - Add text overlay to a video
 
-REQUIRES: ffmpeg with libfreetype (drawtext filter)
-  macOS: brew reinstall ffmpeg
+REQUIRES: ffmpeg with libfreetype (drawtext filter) OR ImageMagick
+  macOS: brew install imagemagick
+  Linux: sudo apt install imagemagick
 
 USAGE:
     edit text INPUT OUTPUT TEXT [OPTIONS]
@@ -248,32 +230,13 @@ OPTIONS:
     --at TIME       Start time (default: 0)
     --duration TIME Duration (default: 3)
     --rect X1,Y1 X2,Y2  Text placement rectangle
-
-TIME FORMATS:
-    10          seconds
-    10.5        seconds with decimal
-    3:45        minutes:seconds
-    2:03:45     hours:minutes:seconds
-    f120        frame number
-    --color COLOR   Text color: named (red, blue) or hex (#FF0000)
+    --color COLOR   Text color (default: white)
     --size SIZE     Font size in pixels (default: 48)
-    --font FONT     Font face name (default: system sans-serif)
-    --bold          Apply bold styling
-    --italic        Apply italic styling
-    --outline WIDTH:COLOR  Text outline (e.g., 2:black)
-    --shadow X:Y:COLOR  Drop shadow offset and color
-    --bg-color COLOR  Text background color
-    --bg-padding PAD  Background padding in pixels
-    --file FILE     Load additional parameters from file
-
-EXAMPLES:
-    # Simple text overlay
-    edit text video.mp4 out.mp4 "Hello World" --at 0 --duration 5
-
-    # Styled text with outline and shadow
-    edit text video.mp4 out.mp4 "Title" \
-        --color white --size 96 --bold \
-        --outline 3:black --shadow 2:2:gray
+    --font FONT     Font face name
+    --bold          Bold text
+    --outline W:C   Outline (e.g., 2:black)
+    --bg-color C    Background color
+    -v, --verbose   Show verbose output
 EOF
 }
 
@@ -284,1031 +247,14 @@ edit stat - Display detailed information about video or image files
 USAGE:
     edit stat FILE [FILE...] [OPTIONS]
 
-ARGUMENTS:
-    FILE            One or more video or image files (supports wildcards)
-
 OPTIONS:
     --json          Output in JSON format
-    --short         Show only essential info
+    -v, --verbose   Show verbose output
 
 EXAMPLES:
-    # Single file
-    edit stat video.mp4
-
-    # Multiple files
-    edit stat video.mp4 image.jpeg
-
-    # Wildcards
-    edit stat *.mp4 *.jpeg
-
-DISPLAYED INFO:
-    - File size (human readable)
-    - Container format
-    - Video codec
-    - Resolution (width x height)
-    - Frame rate
-    - Duration
-    - Total frame count
-    - Bitrate
-    - Pixel format
+    edit stat video.mp4 *.jpeg
 EOF
 }
-
-# ============================================================================
-# Coordinate Parsing
-# ============================================================================
-
-# Parse a single coordinate (pixels or percentage)
-parse_coord() {
-    local coord="$1"
-    local total="$2"
-    
-    # Check if percentage
-    if [[ "$coord" =~ ^([0-9]+\.?[0-9]*)%$ ]]; then
-        local pct="${BASH_REMATCH[1]}"
-        echo "$pct" | awk -v total="$total" '{printf "%.0f", $1/100*total}'
-        return 0
-    fi
-    
-    # Check if pixel value
-    if [[ "$coord" =~ ^[0-9]+\.?[0-9]*$ ]]; then
-        echo "$coord"
-        return 0
-    fi
-    
-    error "Invalid coordinate format: $coord (use pixels or percentage)"
-    return 1
-}
-
-# Parse rectangle string "X1,Y1 X2,Y2" to pixels
-parse_rect() {
-    local rect_str="$1"
-    local video_width="$2"
-    local video_height="$3"
-    
-    # Split by space to get two corners
-    local corners
-    IFS=' ' read -ra corners <<< "$rect_str"
-    
-    if [[ ${#corners[@]} -ne 2 ]]; then
-        error "Rectangle requires exactly two corners: X1,Y1 X2,Y2"
-        return 1
-    fi
-    
-    # Parse first corner
-    IFS=',' read -r x1 y1 <<< "${corners[0]}"
-    IFS=',' read -r x2 y2 <<< "${corners[1]}"
-    
-    # Convert percentages to pixels
-    # X coordinates use video_width, Y coordinates use video_height
-    x1=$(parse_coord "$x1" "$video_width") || return 1
-    y1=$(parse_coord "$y1" "$video_height") || return 1
-    x2=$(parse_coord "$x2" "$video_width") || return 1
-    y2=$(parse_coord "$y2" "$video_height") || return 1
-    
-    # Ensure x1,y1 is top-left and x2,y2 is bottom-right
-    local min_x=$(( x1 < x2 ? x1 : x2 ))
-    local min_y=$(( y1 < y2 ? y1 : y2 ))
-    local max_x=$(( x1 > x2 ? x1 : x2 ))
-    local max_y=$(( y1 > y2 ? y1 : y2 ))
-    
-    local width=$(( max_x - min_x ))
-    local height=$(( max_y - min_y ))
-    
-    echo "$min_x $min_y $max_x $max_y $width $height"
-}
-
-# ============================================================================
-# Time/Frame Parsing
-# ============================================================================
-
-# Convert time string to seconds
-# Supports:
-#   - Frame number: f120
-#   - Seconds: 10, 10.5, 0225
-#   - Minutes:Seconds: 3:45, 03:45
-#   - Hours:Minutes:Seconds: 2:03:45, 02:03:45
-#   - Internal format: seconds:10, frame:120
-time_to_seconds() {
-    local time_str="$1"
-    local fps="${2:-}"
-    
-    # Handle internal format (already parsed)
-    if [[ "$time_str" =~ ^seconds:([0-9]+\.?[0-9]*)$ ]]; then
-        echo "${BASH_REMATCH[1]}"
-        return 0
-    fi
-    if [[ "$time_str" =~ ^frame:([0-9]+\.?[0-9]*)$ ]]; then
-        if [[ -n "$fps" ]]; then
-            echo "${BASH_REMATCH[1]}" | awk -v fps="$fps" '{printf "%.6f", $1/fps}'
-        else
-            echo "${BASH_REMATCH[1]}"
-        fi
-        return 0
-    fi
-    
-    # Frame number (prefixed with 'f')
-    if [[ "$time_str" =~ ^f([0-9]+\.?[0-9]*)$ ]]; then
-        if [[ -n "$fps" ]]; then
-            echo "${BASH_REMATCH[1]}" | awk -v fps="$fps" '{printf "%.6f", $1/fps}'
-        else
-            echo "${BASH_REMATCH[1]}"
-        fi
-        return 0
-    fi
-    
-    # Hours:Minutes:Seconds (two colons)
-    if [[ "$time_str" =~ ^([0-9]+):([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
-        local h="${BASH_REMATCH[1]}"
-        local m="${BASH_REMATCH[2]}"
-        local s="${BASH_REMATCH[3]}"
-        echo "$h $m $s" | awk '{printf "%.6f", $1*3600 + $2*60 + $3}'
-        return 0
-    fi
-    
-    # Minutes:Seconds (one colon)
-    if [[ "$time_str" =~ ^([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
-        local m="${BASH_REMATCH[1]}"
-        local s="${BASH_REMATCH[2]}"
-        echo "$m $s" | awk '{printf "%.6f", $1*60 + $2}'
-        return 0
-    fi
-    
-    # Plain seconds (with optional decimal)
-    if [[ "$time_str" =~ ^[0-9]+\.?[0-9]*$ ]]; then
-        echo "$time_str"
-        return 0
-    fi
-    
-    error "Invalid time format: $time_str"
-    return 1
-}
-
-# Parse time for pic/text commands (stores as internal format)
-parse_time() {
-    local time_str="$1"
-    
-    # Check if frame number (prefixed with 'f')
-    if [[ "$time_str" =~ ^f([0-9]+\.?[0-9]*)$ ]]; then
-        echo "frame:${BASH_REMATCH[1]}"
-        return 0
-    fi
-    
-    # Validate and store as seconds
-    local seconds
-    seconds=$(time_to_seconds "$time_str") || return 1
-    echo "seconds:$seconds"
-    return 0
-}
-
-# ============================================================================
-# Video Info Helpers
-# ============================================================================
-
-get_video_info() {
-    local input="$1"
-    local field="$2"
-    
-    ffprobe -v quiet -select_streams v:0 \
-        -show_entries "stream=$field" \
-        -of csv=p=0 "$input" 2>/dev/null
-}
-
-get_video_width() {
-    get_video_info "$1" "width"
-}
-
-get_video_height() {
-    get_video_info "$1" "height"
-}
-
-get_video_fps() {
-    local fps_str
-    fps_str=$(get_video_info "$1" "r_frame_rate")
-    
-    # Convert fraction to decimal
-    if [[ "$fps_str" =~ ^([0-9]+)/([0-9]+)$ ]]; then
-        echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" | awk '{printf "%.6f", $1/$2}'
-    else
-        echo "$fps_str"
-    fi
-}
-
-get_duration() {
-    ffprobe -v quiet -show_entries format=duration \
-        -of csv=p=0 "$1" 2>/dev/null
-}
-
-# ============================================================================
-# Opacity Parsing
-# ============================================================================
-
-parse_opacity() {
-    local opacity_str="$1"
-    
-    # Handle percentage
-    if [[ "$opacity_str" =~ ^([0-9]+\.?[0-9]*)%$ ]]; then
-        echo "${BASH_REMATCH[1]}" | awk '{printf "%.2f", $1/100}'
-        return 0
-    fi
-    
-    # Handle decimal 0.0-1.0
-    if [[ "$opacity_str" =~ ^[0-9]+\.?[0-9]*$ ]]; then
-        echo "$opacity_str"
-        return 0
-    fi
-    
-    error "Invalid opacity format: $opacity_str (use 0.0-1.0 or 0%-100%)"
-    return 1
-}
-
-# ============================================================================
-# Fade Duration Calculation
-# ============================================================================
-
-get_fade_duration() {
-    local mode="$1"
-    
-    case "$mode" in
-        none) echo "0" ;;
-        quick) echo "0.5" ;;
-        slow) echo "1.5" ;;
-        *) error "Unknown fade mode: $mode"; return 1 ;;
-    esac
-}
-
-# ============================================================================
-# Parameter File Loading
-# ============================================================================
-
-load_params_file() {
-    local file="$1"
-    local -n result_array=$2
-    
-    if [[ ! -f "$file" ]]; then
-        error "Parameter file not found: $file"
-        return 1
-    fi
-    
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        # Skip empty lines and comments
-        [[ -z "$line" || "$line" =~ ^# ]] && continue
-        
-        # Trim whitespace
-        line=$(echo "$line" | xargs)
-        
-        # Split line into words
-        local words
-        read -ra words <<< "$line"
-        
-        # Add to result array
-        for word in "${words[@]}"; do
-            result_array+=("$word")
-        done
-    done < "$file"
-}
-
-# ============================================================================
-# pic Command - Insert Picture
-# ============================================================================
-
-cmd_pic() {
-    local input=""
-    local output=""
-    local pictures=()      # Array of picture files
-    local pic_ats=()       # Array of start times per picture
-    local pic_durations=() # Array of durations per picture
-    local pic_rects=()     # Array of rectangles per picture
-    local global_mode="aspect-fit"
-    local global_opacity="1.0"
-    local global_transparent_bg="yes"
-    
-    # Inherited values for new pictures (start with defaults, then inherit from previous)
-    local at="seconds:0"
-    local duration="seconds:3"
-    local rect=""
-    
-    # Check for help first
-    for arg in "$@"; do
-        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_pic_help
-            exit 0
-        fi
-    done
-    
-    # Parse arguments - support per-image parameters
-    # Each image inherits parameters from the previous one
-    # Syntax: edit pic input.mp4 output.mp4 img1.png --at 0 --rect ... img2.png --at 5 ...
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -v|--verbose)
-                VERBOSE=true
-                shift
-                ;;
-            --at)
-                at=$(parse_time "$2") || exit 1
-                # Update last picture if it exists (options after image file)
-                if [[ ${#pictures[@]} -gt 0 ]]; then
-                    local last_idx=$(( ${#pictures[@]} - 1 ))
-                    pic_ats[$last_idx]="$at"
-                fi
-                shift 2
-                ;;
-            --duration)
-                duration=$(parse_time "$2") || exit 1
-                if [[ ${#pictures[@]} -gt 0 ]]; then
-                    local last_idx=$(( ${#pictures[@]} - 1 ))
-                    pic_durations[$last_idx]="$duration"
-                fi
-                shift 2
-                ;;
-            --rect)
-                rect="$2 $3"
-                if [[ ${#pictures[@]} -gt 0 ]]; then
-                    local last_idx=$(( ${#pictures[@]} - 1 ))
-                    pic_rects[$last_idx]="$rect"
-                fi
-                shift 3
-                ;;
-            --mode)
-                global_mode="$2"
-                shift 2
-                ;;
-            --opacity)
-                global_opacity=$(parse_opacity "$2") || exit 1
-                shift 2
-                ;;
-            --transparent-bg)
-                global_transparent_bg="$2"
-                shift 2
-                ;;
-            -*)
-                error "Unknown option: $1"
-                show_pic_help
-                exit 1
-                ;;
-            *)
-                # Check if this looks like an image file
-                if [[ "$1" =~ \.(jpg|jpeg|png|gif|bmp|tiff|webp)$ ]]; then
-                    # Add new picture with current inherited parameters
-                    pictures+=("$1")
-                    pic_ats+=("$at")
-                    pic_durations+=("$duration")
-                    pic_rects+=("$rect")
-                elif [[ -z "$input" ]]; then
-                    input="$1"
-                elif [[ -z "$output" ]]; then
-                    output="$1"
-                else
-                    error "Unexpected argument: $1"
-                    show_pic_help
-                    exit 1
-                fi
-                shift
-                ;;
-        esac
-    done
-    
-    # Validate required arguments
-    local missing=()
-    [[ -z "$input" ]] && missing+=("INPUT video file")
-    [[ -z "$output" ]] && missing+=("OUTPUT video file")
-    [[ ${#pictures[@]} -eq 0 ]] && missing+=("PICTURE file(s)")
-    
-    # Check that all pictures have rectangles
-    for i in "${!pictures[@]}"; do
-        if [[ -z "${pic_rects[$i]}" ]]; then
-            missing+=("--rect for ${pictures[$i]}")
-        fi
-    done
-    
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        error "Missing required arguments:"
-        for m in "${missing[@]}"; do
-            echo "  - $m"
-        done
-        echo ""
-        show_pic_help
-        exit 1
-    fi
-    
-    # Validate input files exist
-    [[ ! -f "$input" ]] && error "Input video not found: $input" && exit 1
-    for pic in "${pictures[@]}"; do
-        [[ ! -f "$pic" ]] && error "Picture file not found: $pic" && exit 1
-    done
-    
-    # Get video dimensions
-    local vid_width vid_height
-    vid_width=$(get_video_width "$input") || { error "Failed to read video info"; exit 1; }
-    vid_height=$(get_video_height "$input") || { error "Failed to read video info"; exit 1; }
-    
-    if [[ -z "$vid_width" || -z "$vid_height" ]]; then
-        error "Could not determine video dimensions"
-        exit 1
-    fi
-    
-    info "Video: ${vid_width}x${vid_height}"
-    
-    # Get video fps
-    local fps
-    fps=$(get_video_fps "$input")
-    
-    # Build input arguments
-    local input_args=()
-    input_args+=(-i "$input")
-    for pic in "${pictures[@]}"; do
-        input_args+=(-i "$pic")
-    done
-    
-    # Build filter complex with per-image parameters
-    local filters=""
-    local last_label="[0:v]"
-    local input_idx=1
-    
-    for i in "${!pictures[@]}"; do
-        local pic_idx=$input_idx
-        local pic_at="${pic_ats[$i]}"
-        local pic_duration="${pic_durations[$i]}"
-        local pic_rect="${pic_rects[$i]}"
-        
-        # Parse this picture's rectangle
-        local coords
-        coords=$(parse_rect "$pic_rect" "$vid_width" "$vid_height") || exit 1
-        
-        local x1 y1 x2 y2 rect_w rect_h
-        read -r x1 y1 x2 y2 rect_w rect_h <<< "$coords"
-        
-        # Convert time values to seconds
-        local start_seconds duration_seconds
-        start_seconds=$(time_to_seconds "$pic_at" "$fps")
-        duration_seconds=$(time_to_seconds "$pic_duration" "$fps")
-        
-        local end_seconds
-        end_seconds=$(echo "$start_seconds $duration_seconds" | awk '{printf "%.6f", $1 + $2}')
-        
-        info "${pictures[$i]}: at=${start_seconds}s, duration=${duration_seconds}s, rect=${x1},${y1}-${x2},${y2}"
-        
-        # Use unique label for each overlay
-        local ovr_label="[ovr${i}]"
-        
-        # Scale and format the picture
-        case "$global_mode" in
-            aspect-fit)
-                filters+="[${pic_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba${ovr_label};"
-                ;;
-            aspect-fill)
-                filters+="[${pic_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=increase,crop=${rect_w}:${rect_h},format=rgba${ovr_label};"
-                ;;
-            scale)
-                filters+="[${pic_idx}:v]scale=${rect_w}:${rect_h},format=rgba${ovr_label};"
-                ;;
-            *)
-                error "Unknown mode: $global_mode (use aspect-fit, aspect-fill, or scale)"
-                exit 1
-                ;;
-        esac
-        
-        # Apply opacity
-        if [[ "$global_opacity" != "1.0" ]]; then
-            filters+="${ovr_label}colorchannelmixer=aa=${global_opacity}${ovr_label};"
-        fi
-        
-        # Overlay onto video with enable timing
-        local next_label="[v${input_idx}]"
-        filters+="${last_label}${ovr_label}overlay=${x1}:${y1}:enable='between(t\\,${start_seconds}\\,${end_seconds})'${next_label};"
-        last_label="${next_label}"
-        
-        input_idx=$((input_idx + 1))
-    done
-    
-    # Remove trailing semicolon
-    filters="${filters%;}"
-    
-    # Execute ffmpeg
-    info "Processing ${#pictures[@]} image(s)..."
-    
-    if [[ "$VERBOSE" == "true" ]]; then
-        info "Filter complex:"
-        echo "$filters" | sed 's/;/;\n/g'
-        echo ""
-    fi
-    
-    local loglevel="warning"
-    if [[ "$VERBOSE" == "true" ]]; then
-        loglevel="info"
-    fi
-    
-    local ffmpeg_cmd=(
-        ffmpeg -y
-        -loglevel "$loglevel"
-        "${input_args[@]}"
-        -filter_complex "$filters"
-        -map "${last_label}"
-        -map "0:a?"
-        -c:a copy
-        -stats
-        "$output"
-    )
-    
-    if [[ "$VERBOSE" == "true" ]]; then
-        info "FFmpeg command:"
-        echo "${ffmpeg_cmd[@]}" | sed 's/ -/ \\\n  -/g'
-        echo ""
-    fi
-    
-    "${ffmpeg_cmd[@]}"
-    
-    if [[ $? -eq 0 ]]; then
-        success "Created: $output"
-    else
-        error "Failed to process video"
-        exit 1
-    fi
-}
-
-# ============================================================================
-# text Command - Insert Text
-# ============================================================================
-
-cmd_text() {
-    local input=""
-    local output=""
-    local text=""
-    local at="seconds:0"
-    local duration="seconds:3"
-    local rect=""
-    local color="white"
-    local size="48"
-    local font=""
-    local bold=false
-    local italic=false
-    local outline=""
-    local shadow=""
-    local bg_color=""
-    local bg_padding="0"
-    local param_file=""
-
-    # Check for help first
-    for arg in "$@"; do
-        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_text_help
-            exit 0
-        fi
-    done
-    
-    # Check if drawtext filter is available
-    if ! ffmpeg -filters 2>/dev/null | grep -q drawtext; then
-        error "drawtext filter not available in your ffmpeg installation."
-        error "On macOS, reinstall ffmpeg with: brew reinstall ffmpeg"
-        error "Or install: brew install ffmpeg --with-freetype"
-        exit 1
-    fi
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -v|--verbose)
-                VERBOSE=true
-                shift
-                ;;
-            --at)
-                at=$(parse_time "$2") || exit 1
-                shift 2
-                ;;
-            --duration)
-                duration=$(parse_time "$2") || exit 1
-                shift 2
-                ;;
-            --appear)
-                appear="$2"
-                shift 2
-                ;;
-            --disappear)
-                disappear="$2"
-                shift 2
-                ;;
-            --rect)
-                rect="$2 $3"
-                shift 3
-                ;;
-            --color)
-                color="$2"
-                shift 2
-                ;;
-            --size)
-                size="$2"
-                shift 2
-                ;;
-            --font)
-                font="$2"
-                shift 2
-                ;;
-            --bold)
-                bold=true
-                shift
-                ;;
-            --italic)
-                italic=true
-                shift
-                ;;
-            --outline)
-                outline="$2"
-                shift 2
-                ;;
-            --shadow)
-                shadow="$2"
-                shift 2
-                ;;
-            --bg-color)
-                bg_color="$2"
-                shift 2
-                ;;
-            --bg-padding)
-                bg_padding="$2"
-                shift 2
-                ;;
-            --file)
-                param_file="$2"
-                shift 2
-                ;;
-            -*)
-                error "Unknown option: $1"
-                show_text_help
-                exit 1
-                ;;
-            *)
-                if [[ -z "$input" ]]; then
-                    input="$1"
-                elif [[ -z "$output" ]]; then
-                    output="$1"
-                elif [[ -z "$text" ]]; then
-                    text="$1"
-                else
-                    error "Unexpected argument: $1"
-                    exit 1
-                fi
-                shift
-                ;;
-        esac
-    done
-    
-    # Load parameters from file if specified
-    if [[ -n "$param_file" ]]; then
-        local file_params=()
-        load_params_file "$param_file" file_params || exit 1
-        
-        set -- "${file_params[@]}"
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
-                --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
-                --appear) appear="$2"; shift 2 ;;
-                --disappear) disappear="$2"; shift 2 ;;
-                --rect) rect="$2 $3"; shift 3 ;;
-                --color) color="$2"; shift 2 ;;
-                --size) size="$2"; shift 2 ;;
-                --font) font="$2"; shift 2 ;;
-                --bold) bold=true; shift ;;
-                --italic) italic=true; shift ;;
-                --outline) outline="$2"; shift 2 ;;
-                --shadow) shadow="$2"; shift 2 ;;
-                --bg-color) bg_color="$2"; shift 2 ;;
-                --bg-padding) bg_padding="$2"; shift 2 ;;
-                *) shift ;;
-            esac
-        done
-    fi
-    
-    # Validate required arguments
-    local missing=()
-    [[ -z "$input" ]] && missing+=("INPUT video file")
-    [[ -z "$output" ]] && missing+=("OUTPUT video file")
-    [[ -z "$text" ]] && missing+=("TEXT string")
-    [[ -z "$rect" ]] && missing+=("--rect X1,Y1 X2,Y2")
-    
-    if [[ ${#missing[@]} -gt 0 ]]; then
-        error "Missing required arguments:"
-        for m in "${missing[@]}"; do
-            echo "  - $m"
-        done
-        echo ""
-        show_text_help
-        exit 1
-    fi
-    
-    # Validate input file
-    [[ ! -f "$input" ]] && error "Input video not found: $input" && exit 1
-    
-    # Get video info
-    local width height fps
-    width=$(get_video_width "$input") || { error "Failed to read video info"; exit 1; }
-    height=$(get_video_height "$input") || { error "Failed to read video info"; exit 1; }
-    fps=$(get_video_fps "$input")
-    
-    info "Video: ${width}x${height}"
-    
-    # Parse rectangle
-    local coords
-    coords=$(parse_rect "$rect" "$width" "$height") || exit 1
-    
-    local x1 y1 x2 y2
-    read -r x1 y1 x2 y2 _ _ <<< "$coords"
-    
-    local rect_w=$(( x2 - x1 ))
-    local rect_h=$(( y2 - y1 ))
-    
-    # Convert time values
-    local start_seconds duration_seconds
-    start_seconds=$(time_to_seconds "$at" "$fps")
-    duration_seconds=$(time_to_seconds "$duration" "$fps")
-    
-    # Calculate fade durations
-    local fade_in_duration fade_out_duration
-    fade_in_duration=$(get_fade_duration "$appear")
-    fade_out_duration=$(get_fade_duration "$disappear")
-    
-    info "Start: ${start_seconds}s, Duration: ${duration_seconds}s"
-    
-    # Escape text for ffmpeg drawtext filter
-    # Replace special chars: ' -> \', : -> \:, \ -> \\, etc.
-    local escaped_text="$text"
-    escaped_text="${escaped_text//\\/\\\\}"    # Backslash first
-    escaped_text="${escaped_text//\'/\\\'}"    # Single quotes
-    escaped_text="${escaped_text//:/\\:}"      # Colons (filter separator)
-    escaped_text="${escaped_text//;/\\;}"      # Semicolons
-    escaped_text="${escaped_text//[/\\[}"      # Brackets
-    escaped_text="${escaped_text//]/\\]}"      # Brackets
-    
-    # Build drawtext filter
-    local drawtext_opts="text='${escaped_text}'"
-    drawtext_opts+=":fontsize=${size}"
-    drawtext_opts+=":fontcolor=${color}"
-    
-    # Font
-    if [[ -n "$font" ]]; then
-        drawtext_opts+=":font='${font}'"
-    fi
-    
-    # Style
-    if [[ "$bold" == "true" ]]; then
-        drawtext_opts+=":fontcolor_expr=${color}@1|bold"
-    fi
-    if [[ "$italic" == "true" ]]; then
-        drawtext_opts+=":fontcolor_expr=${color}@1|italic"
-    fi
-    
-    # Position - center in rectangle
-    drawtext_opts+=":x=${x1}+(${rect_w}-text_w)/2:y=${y1}+(${rect_h}-text_h)/2"
-    
-    # Text box / background
-    if [[ -n "$bg_color" ]]; then
-        drawtext_opts+=":box=1:boxcolor=${bg_color}@0.8:boxborderw=${bg_padding}"
-    fi
-    
-    # Outline
-    if [[ -n "$outline" ]]; then
-        IFS=':' read -r outline_width outline_color <<< "$outline"
-        drawtext_opts+=":borderw=${outline_width}:bordercolor=${outline_color:-black}"
-    fi
-    
-    # Shadow
-    if [[ -n "$shadow" ]]; then
-        IFS=':' read -r shadow_x shadow_y shadow_color <<< "$shadow"
-        drawtext_opts+=":shadowx=${shadow_x}:shadowy=${shadow_y}:shadowcolor=${shadow_color:-black}"
-    fi
-    
-    # Time enable
-    local end_seconds
-    end_seconds=$(echo "$start_seconds $duration_seconds" | awk '{printf "%.6f", $1 + $2}')
-    drawtext_opts+=":enable='between(t\\,${start_seconds}\\,${end_seconds})'"
-    
-    # Build filter chain
-    local filters="[0:v]drawtext=${drawtext_opts}[out]"
-    
-    # Execute ffmpeg
-    info "Processing..."
-    
-    if [[ "$VERBOSE" == "true" ]]; then
-        info "Filter:"
-        echo "$filters" | sed 's/:/:\n  /g'
-        echo ""
-    fi
-    
-    local loglevel="warning"
-    if [[ "$VERBOSE" == "true" ]]; then
-        loglevel="info"
-    fi
-    
-    local ffmpeg_cmd=(
-        ffmpeg -y
-        -loglevel "$loglevel"
-        -i "$input"
-        -filter_complex "$filters"
-        -map "[out]"
-        -map "0:a?"
-        -c:a copy
-        -stats
-        "$output"
-    )
-    
-    if [[ "$VERBOSE" == "true" ]]; then
-        info "FFmpeg command:"
-        echo "${ffmpeg_cmd[@]}" | sed 's/ -/ \\\n  -/g'
-        echo ""
-    fi
-    
-    "${ffmpeg_cmd[@]}"
-    
-    if [[ $? -eq 0 ]]; then
-        success "Created: $output"
-    else
-        error "Failed to process video"
-        exit 1
-    fi
-}
-
-# ============================================================================
-# stat Command - Display Info
-# ============================================================================
-
-# Display stats for a single file
-display_stat() {
-    local input="$1"
-    local json_output="$2"
-    local short_output="$3"
-    
-    [[ ! -f "$input" ]] && error "File not found: $input" && return 1
-    
-    # Get file size
-    local file_size
-    if [[ "$(uname)" == "Darwin" ]]; then
-        file_size=$(stat -f%z "$input" 2>/dev/null || echo "unknown")
-    else
-        file_size=$(stat -c%s "$input" 2>/dev/null || echo "unknown")
-    fi
-    
-    # Format file size
-    local size_human
-    if [[ "$file_size" != "unknown" ]]; then
-        size_human=$(numfmt --to=iec-i --suffix=B "$file_size" 2>/dev/null || echo "${file_size} bytes")
-    else
-        size_human="unknown"
-    fi
-    
-    if [[ "$json_output" == "true" ]]; then
-        local width height fps duration codec format_name pixel_format bitrate
-        width=$(get_video_width "$input" 2>/dev/null || echo "N/A")
-        height=$(get_video_height "$input" 2>/dev/null || echo "N/A")
-        fps=$(get_video_fps "$input" 2>/dev/null || echo "N/A")
-        duration=$(get_duration "$input" 2>/dev/null || echo "N/A")
-        codec=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
-        format_name=$(ffprobe -v quiet -show_entries format=format_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
-        pixel_format=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
-        bitrate=$(ffprobe -v quiet -show_entries format=bit_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        
-        cat << EOF
-{
-  "file": "$input",
-  "size": "$file_size",
-  "size_human": "$size_human",
-  "format": "$format_name",
-  "codec": "$codec",
-  "width": "$width",
-  "height": "$height",
-  "fps": "$fps",
-  "duration": "$duration",
-  "pixel_format": "$pixel_format",
-  "bitrate": "$bitrate"
-}
-EOF
-    else
-        echo ""
-        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e "${BLUE} File Statistics${NC}"
-        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo -e " ${GREEN}File:${NC}         $input"
-        echo -e " ${GREEN}Size:${NC}         $size_human ($file_size bytes)"
-        
-        local format_name
-        format_name=$(ffprobe -v quiet -show_entries format=format_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
-        echo -e " ${GREEN}Format:${NC}       $format_name"
-        
-        local codec width height fps duration pixel_format bitrate frames
-        codec=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        width=$(get_video_width "$input" 2>/dev/null || echo "N/A")
-        height=$(get_video_height "$input" 2>/dev/null || echo "N/A")
-        fps=$(get_video_fps "$input" 2>/dev/null || echo "N/A")
-        duration=$(get_duration "$input" 2>/dev/null || echo "N/A")
-        pixel_format=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        bitrate=$(ffprobe -v quiet -show_entries format=bit_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        frames=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=nb_frames -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-        
-        if [[ "$codec" != "N/A" ]]; then
-            echo -e " ${GREEN}Video Codec:${NC}  $codec"
-            echo -e " ${GREEN}Resolution:${NC}  ${width} × ${height}"
-            echo -e " ${GREEN}Frame Rate:${NC}  $fps fps"
-            echo -e " ${GREEN}Pixel Fmt:${NC}   $pixel_format"
-        fi
-        
-        if [[ "$duration" != "N/A" ]]; then
-            local hours minutes seconds_val
-            hours=$(echo "$duration" | awk '{printf "%02d", int($1/3600)}')
-            minutes=$(echo "$duration" | awk '{printf "%02d", int($1/60)%60}')
-            seconds_val=$(echo "$duration" | awk '{printf "%06.3f", $1%60}')
-            echo -e " ${GREEN}Duration:${NC}     ${hours}:${minutes}:${seconds_val} ($duration s)"
-        fi
-        
-        if [[ "$frames" != "N/A" ]]; then
-            echo -e " ${GREEN}Frames:${NC}       $frames"
-        fi
-        
-        if [[ "$bitrate" != "N/A" && "$bitrate" != "N/A" ]]; then
-            local bitrate_kbps
-            bitrate_kbps=$(echo "$bitrate" | awk '{printf "%.0f", $1/1000}')
-            echo -e " ${GREEN}Bitrate:${NC}      ${bitrate_kbps} kbps"
-        fi
-        
-        local audio_codec audio_sample_rate audio_channels
-        audio_codec=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null || echo "")
-        
-        if [[ -n "$audio_codec" && "$audio_codec" != "N/A" ]]; then
-            audio_sample_rate=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=sample_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-            audio_channels=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=channels -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
-            
-            echo -e " ${GREEN}Audio Codec:${NC}  $audio_codec"
-            echo -e " ${GREEN}Sample Rate:${NC} ${audio_sample_rate} Hz"
-            echo -e " ${GREEN}Channels:${NC}    $audio_channels"
-        fi
-        
-        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-        echo ""
-    fi
-}
-
-cmd_stat() {
-    local files=()
-    local json_output=false
-    local short_output=false
-
-    # Check for help first
-    for arg in "$@"; do
-        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_stat_help
-            exit 0
-        fi
-    done
-    
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --json)
-                json_output=true
-                shift
-                ;;
-            --short)
-                short_output=true
-                shift
-                ;;
-            -*)
-                error "Unknown option: $1"
-                show_stat_help
-                exit 1
-                ;;
-            *)
-                files+=("$1")
-                shift
-                ;;
-        esac
-    done
-    
-    # Validate input
-    if [[ ${#files[@]} -eq 0 ]]; then
-        error "Missing required argument: FILE(s)"
-        echo ""
-        show_stat_help
-        exit 1
-    fi
-    
-    # Process each file
-    local has_error=false
-    for file in "${files[@]}"; do
-        if [[ ! -f "$file" ]]; then
-            error "File not found: $file"
-            has_error=true
-            continue
-        fi
-        display_stat "$file" "$json_output" "$short_output" || has_error=true
-    done
-    
-    if [[ "$has_error" == "true" ]]; then
-        exit 1
-    fi
-}
-
-# ============================================================================
-# crop Command - Extract portion of video
-# ============================================================================
 
 show_crop_help() {
     cat << 'EOF'
@@ -1317,86 +263,12 @@ edit crop - Extract a portion of video by time
 USAGE:
     edit crop INPUT OUTPUT [OPTIONS]
 
-ARGUMENTS:
-    INPUT           Input video file
-    OUTPUT          Output video file
-
 OPTIONS:
     --from TIME     Start time. Default: beginning
     --to TIME       End time. Default: end
     -v, --verbose   Show verbose output
-
-TIME FORMATS:
-    10          seconds
-    10.5        seconds with decimal
-    3:45        minutes:seconds
-    2:03:45     hours:minutes:seconds
-
-EXAMPLES:
-    # Extract from 10s to 30s
-    edit crop input.mp4 output.mp4 --from 10 --to 30
-
-    # Extract from 1m30s to 3m45s
-    edit crop input.mp4 output.mp4 --from 1:30 --to 3:45
-
-    # Extract from start to 15s
-    edit crop input.mp4 output.mp4 --to 15
 EOF
 }
-
-cmd_crop() {
-    local input=""
-    local output=""
-    local from_time=""
-    local to_time=""
-
-    for arg in "$@"; do
-        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_crop_help
-            exit 0
-        fi
-    done
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -v|--verbose) VERBOSE=true; shift ;;
-            --from) from_time="$2"; shift 2 ;;
-            --to) to_time="$2"; shift 2 ;;
-            -*) error "Unknown option: $1"; show_crop_help; exit 1 ;;
-            *)
-                if [[ -z "$input" ]]; then input="$1"
-                elif [[ -z "$output" ]]; then output="$1"
-                else error "Unexpected argument: $1"; exit 1
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    [[ -z "$input" ]] && error "Missing INPUT" && show_crop_help && exit 1
-    [[ -z "$output" ]] && error "Missing OUTPUT" && show_crop_help && exit 1
-    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
-
-    local loglevel="warning"
-    [[ "$VERBOSE" == "true" ]] && loglevel="info"
-
-    local ffmpeg_cmd=(ffmpeg -y -loglevel "$loglevel")
-    
-    [[ -n "$from_time" ]] && ffmpeg_cmd+=(-ss "$from_time")
-    ffmpeg_cmd+=(-i "$input")
-    [[ -n "$to_time" ]] && ffmpeg_cmd+=(-to "$to_time")
-    
-    ffmpeg_cmd+=(-c copy -stats "$output")
-
-    [[ "$VERBOSE" == "true" ]] && info "Command: ${ffmpeg_cmd[*]}"
-    
-    "${ffmpeg_cmd[@]}"
-    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
-}
-
-# ============================================================================
-# cut Command - Remove portion of video
-# ============================================================================
 
 show_cut_help() {
     cat << 'EOF'
@@ -1405,110 +277,12 @@ edit cut - Remove a portion of video by time
 USAGE:
     edit cut INPUT OUTPUT [OPTIONS]
 
-ARGUMENTS:
-    INPUT           Input video file
-    OUTPUT          Output video file
-
 OPTIONS:
     --from TIME     Start of section to remove
     --to TIME       End of section to remove
     -v, --verbose   Show verbose output
-
-TIME FORMATS:
-    10          seconds
-    10.5        seconds with decimal
-    3:45        minutes:seconds
-    2:03:45     hours:minutes:seconds
-
-EXAMPLES:
-    # Remove section from 15s to 25s
-    edit cut input.mp4 output.mp4 --from 15 --to 25
-
-    # Remove from 1m30s to 2m15s
-    edit cut input.mp4 output.mp4 --from 1:30 --to 2:15
-
-    # Remove from start to 10s
-    edit cut input.mp4 output.mp4 --to 10
 EOF
 }
-
-cmd_cut() {
-    local input=""
-    local output=""
-    local from_time=""
-    local to_time=""
-
-    for arg in "$@"; do
-        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_cut_help
-            exit 0
-        fi
-    done
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -v|--verbose) VERBOSE=true; shift ;;
-            --from) from_time="$2"; shift 2 ;;
-            --to) to_time="$2"; shift 2 ;;
-            -*) error "Unknown option: $1"; show_cut_help; exit 1 ;;
-            *)
-                if [[ -z "$input" ]]; then input="$1"
-                elif [[ -z "$output" ]]; then output="$1"
-                else error "Unexpected argument: $1"; exit 1
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    [[ -z "$input" ]] && error "Missing INPUT" && show_cut_help && exit 1
-    [[ -z "$output" ]] && error "Missing OUTPUT" && show_cut_help && exit 1
-    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
-    [[ -z "$from_time" && -z "$to_time" ]] && error "Specify --from and/or --to" && exit 1
-
-    local loglevel="warning"
-    [[ "$VERBOSE" == "true" ]] && loglevel="info"
-
-    # Get duration
-    local duration
-    duration=$(get_duration "$input")
-
-    local filter=""
-    if [[ -n "$from_time" && -n "$to_time" ]]; then
-        # Cut middle section: keep 0-from and to-end
-        filter="[0:v]trim=start=0:end=${from_time},setpts=PTS-STARTPTS[v1];"
-        filter+="[0:v]trim=start=${to_time},setpts=PTS-STARTPTS[v2];"
-        filter+="[v1][v2]concat=n=2:v=1:a=0[vout];"
-        filter+="[0:a]atrim=start=0:end=${from_time}[a1];"
-        filter+="[0:a]atrim=start=${to_time}[a2];"
-        filter+="[a1][a2]concat=n=2:v=0:a=1[aout]"
-    elif [[ -n "$to_time" ]]; then
-        # Cut from start to to_time
-        filter="[0:v]trim=start=${to_time},setpts=PTS-STARTPTS[vout];"
-        filter+="[0:a]atrim=start=${to_time}[aout]"
-    elif [[ -n "$from_time" ]]; then
-        # Cut from from_time to end
-        filter="[0:v]trim=start=0:end=${from_time},setpts=PTS-STARTPTS[vout];"
-        filter+="[0:a]atrim=start=0:end=${from_time}[aout]"
-    fi
-
-    local ffmpeg_cmd=(
-        ffmpeg -y -loglevel "$loglevel"
-        -i "$input"
-        -filter_complex "$filter"
-        -map "[vout]" -map "[aout]"
-        -stats "$output"
-    )
-
-    [[ "$VERBOSE" == "true" ]] && info "Filter: $filter"
-    
-    "${ffmpeg_cmd[@]}"
-    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
-}
-
-# ============================================================================
-# insert Command - Insert video at timestamp
-# ============================================================================
 
 show_insert_help() {
     cat << 'EOF'
@@ -1517,95 +291,11 @@ edit insert - Insert another video at a timestamp
 USAGE:
     edit insert MAIN INSERTED OUTPUT [OPTIONS]
 
-ARGUMENTS:
-    MAIN            Main video file
-    INSERTED        Video to insert
-    OUTPUT          Output video file
-
 OPTIONS:
     --at TIME       Timestamp to insert at. Default: 0
     -v, --verbose   Show verbose output
-
-TIME FORMATS:
-    10          seconds
-    10.5        seconds with decimal
-    3:45        minutes:seconds
-    2:03:45     hours:minutes:seconds
-
-EXAMPLES:
-    # Insert video2 at 10s into video1
-    edit insert video1.mp4 video2.mp4 output.mp4 --at 10
-
-    # Insert at 2m30s
-    edit insert main.mp4 intro.mp4 output.mp4 --at 2:30
 EOF
 }
-
-cmd_insert() {
-    local main=""
-    local inserted=""
-    local output=""
-    local at_time="0"
-
-    for arg in "$@"; do
-        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_insert_help
-            exit 0
-        fi
-    done
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -v|--verbose) VERBOSE=true; shift ;;
-            --at) at_time="$2"; shift 2 ;;
-            -*) error "Unknown option: $1"; show_insert_help; exit 1 ;;
-            *)
-                if [[ -z "$main" ]]; then main="$1"
-                elif [[ -z "$inserted" ]]; then inserted="$1"
-                elif [[ -z "$output" ]]; then output="$1"
-                else error "Unexpected argument: $1"; exit 1
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    [[ -z "$main" ]] && error "Missing MAIN video" && show_insert_help && exit 1
-    [[ -z "$inserted" ]] && error "Missing INSERTED video" && show_insert_help && exit 1
-    [[ -z "$output" ]] && error "Missing OUTPUT" && show_insert_help && exit 1
-    [[ ! -f "$main" ]] && error "File not found: $main" && exit 1
-    [[ ! -f "$inserted" ]] && error "File not found: $inserted" && exit 1
-
-    local loglevel="warning"
-    [[ "$VERBOSE" == "true" ]] && loglevel="info"
-
-    # Split main at insertion point, concat with inserted video
-    local filter="[0:v]trim=start=0:end=${at_time},setpts=PTS-STARTPTS[v1];"
-    filter+="[0:v]trim=start=${at_time},setpts=PTS-STARTPTS[v2];"
-    filter+="[1:v]setpts=PTS-STARTPTS[v3];"
-    filter+="[v1][v3][v2]concat=n=3:v=1:a=0[vout];"
-    filter+="[0:a]atrim=start=0:end=${at_time}[a1];"
-    filter+="[0:a]atrim=start=${at_time}[a2];"
-    filter+="[1:a]asetpts=PTS-STARTPTS[a3];"
-    filter+="[a1][a3][a2]concat=n=3:v=0:a=1[aout]"
-
-    local ffmpeg_cmd=(
-        ffmpeg -y -loglevel "$loglevel"
-        -i "$main" -i "$inserted"
-        -filter_complex "$filter"
-        -map "[vout]" -map "[aout]"
-        -stats "$output"
-    )
-
-    [[ "$VERBOSE" == "true" ]] && info "Filter: $filter"
-    
-    "${ffmpeg_cmd[@]}"
-    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
-}
-
-# ============================================================================
-# audio Command - Replace or mix audio
-# ============================================================================
 
 show_audio_help() {
     cat << 'EOF'
@@ -1614,120 +304,13 @@ edit audio - Replace or mix audio at a timestamp
 USAGE:
     edit audio INPUT AUDIO_OR_VIDEO OUTPUT [OPTIONS]
 
-ARGUMENTS:
-    INPUT           Input video file
-    AUDIO_OR_VIDEO  Audio file or video (audio extracted)
-    OUTPUT          Output video file
-
 OPTIONS:
     --at TIME       Start time for new audio. Default: 0
-    --duration TIME Duration of new audio. Default: full length
-    --mix LEVEL     Mix level: 0.0-1.0 or 0%-100%. Default: 1.0 (full replacement)
-                    1.0 = new audio only
-                    0.5 = 50/50 mix
-                    0.0 = original audio only
+    --duration TIME Duration of new audio. Default: full
+    --mix LEVEL     Mix level: 0.0-1.0 (default: 1.0 = full replacement)
     -v, --verbose   Show verbose output
-
-TIME FORMATS:
-    10          seconds
-    10.5        seconds with decimal
-    3:45        minutes:seconds
-    2:03:45     hours:minutes:seconds
-
-EXAMPLES:
-    # Replace audio from 5s for 10s
-    edit audio input.mp4 new_audio.mp3 output.mp4 --at 5 --duration 10
-
-    # Mix at 50% from 1m30s
-    edit audio input.mp4 music.mp3 output.mp4 --at 1:30 --mix 0.5
-
-    # Full replacement from start
-    edit audio input.mp4 narration.wav output.mp4 --mix 1.0
 EOF
 }
-
-cmd_audio() {
-    local input=""
-    local audio_source=""
-    local output=""
-    local at_time="0"
-    local duration=""
-    local mix_level="1.0"
-
-    for arg in "$@"; do
-        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_audio_help
-            exit 0
-        fi
-    done
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -v|--verbose) VERBOSE=true; shift ;;
-            --at) at_time="$2"; shift 2 ;;
-            --duration) duration="$2"; shift 2 ;;
-            --mix) mix_level=$(parse_opacity "$2") || exit 1; shift 2 ;;
-            -*) error "Unknown option: $1"; show_audio_help; exit 1 ;;
-            *)
-                if [[ -z "$input" ]]; then input="$1"
-                elif [[ -z "$audio_source" ]]; then audio_source="$1"
-                elif [[ -z "$output" ]]; then output="$1"
-                else error "Unexpected argument: $1"; exit 1
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    [[ -z "$input" ]] && error "Missing INPUT" && show_audio_help && exit 1
-    [[ -z "$audio_source" ]] && error "Missing AUDIO source" && show_audio_help && exit 1
-    [[ -z "$output" ]] && error "Missing OUTPUT" && show_audio_help && exit 1
-    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
-    [[ ! -f "$audio_source" ]] && error "File not found: $audio_source" && exit 1
-
-    local loglevel="warning"
-    [[ "$VERBOSE" == "true" ]] && loglevel="info"
-
-    # Calculate mix weights
-    local orig_weight=$(echo "1.0 $mix_level" | awk '{printf "%.2f", $1 - $2}')
-    local new_weight="$mix_level"
-
-    local filter=""
-    if [[ -n "$duration" ]]; then
-        # Mix at specific time for specific duration
-        filter="[1:a]atrim=start=0:end=${duration},asetpts=PTS-STARTPTS,volume=${new_weight}[new];"
-        filter+="[0:a]volume=${orig_weight}[orig];"
-        filter+="[orig][new]amix=inputs=2:duration=first:dropout_transition=0[mixed];"
-        filter+="[0:a]atrim=start=0:end=${at_time}[before];"
-        filter+="[0:a]atrim=start=$(echo "$at_time $duration" | awk '{printf "%.6f", $1 + $2}')[after];"
-        filter+="[before][mixed][after]concat=n=3:v=0:a=1[aout]"
-    else
-        # Mix from at_time to end
-        filter="[1:a]asetpts=PTS-STARTPTS,volume=${new_weight}[new];"
-        filter+="[0:a]volume=${orig_weight}[orig];"
-        filter+="[orig][new]amix=inputs=2:duration=first:dropout_transition=0[mixed];"
-        filter+="[0:a]atrim=start=0:end=${at_time}[before];"
-        filter+="[before][mixed]concat=n=2:v=0:a=1[aout]"
-    fi
-
-    local ffmpeg_cmd=(
-        ffmpeg -y -loglevel "$loglevel"
-        -i "$input" -i "$audio_source"
-        -filter_complex "$filter"
-        -map "0:v" -map "[aout]"
-        -c:v copy -shortest
-        -stats "$output"
-    )
-
-    [[ "$VERBOSE" == "true" ]] && info "Filter: $filter"
-    
-    "${ffmpeg_cmd[@]}"
-    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
-}
-
-# ============================================================================
-# resize Command - Resize video
-# ============================================================================
 
 show_resize_help() {
     cat << 'EOF'
@@ -1736,99 +319,525 @@ edit resize - Resize video dimensions
 USAGE:
     edit resize INPUT OUTPUT [OPTIONS]
 
-ARGUMENTS:
-    INPUT           Input video file
-    OUTPUT          Output video file
-
 OPTIONS:
-    --width W       Target width. If omitted, calculated from height
-    --height H      Target height. If omitted, calculated from width
-    --scale P       Scale factor (e.g., 0.5 for half, 2.0 for double)
+    --width W       Target width
+    --height H      Target height
+    --scale P       Scale factor (e.g., 0.5)
     -v, --verbose   Show verbose output
-
-EXAMPLES:
-    # Resize to 1280x720
-    edit resize input.mp4 output.mp4 --width 1280 --height 720
-
-    # Resize to half size
-    edit resize input.mp4 output.mp4 --scale 0.5
-
-    # Resize to 720p width (height calculated)
-    edit resize input.mp4 output.mp4 --width 1280
 EOF
 }
 
-cmd_resize() {
-    local input=""
-    local output=""
-    local target_width=""
-    local target_height=""
-    local scale=""
+# ============================================================================
+# Coordinate Parsing
+# ============================================================================
 
-    for arg in "$@"; do
-        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
-            show_resize_help
-            exit 0
-        fi
-    done
+parse_coord() {
+    local coord="$1"
+    local total="$2"
+    
+    if [[ "$coord" =~ ^([0-9]+\.?[0-9]*)%$ ]]; then
+        local pct="${BASH_REMATCH[1]}"
+        echo "$pct" | awk -v total="$total" '{printf "%.0f", $1/100*total}'
+        return 0
+    fi
+    
+    if [[ "$coord" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        echo "$coord"
+        return 0
+    fi
+    
+    error "Invalid coordinate: $coord (use pixels or percentage)"
+    return 1
+}
+
+parse_rect() {
+    local rect_str="$1"
+    local video_width="$2"
+    local video_height="$3"
+    
+    local corners
+    IFS=' ' read -ra corners <<< "$rect_str"
+    
+    if [[ ${#corners[@]} -ne 2 ]]; then
+        error "Rectangle requires two corners: X1,Y1 X2,Y2"
+        return 1
+    fi
+    
+    IFS=',' read -r x1 y1 <<< "${corners[0]}"
+    IFS=',' read -r x2 y2 <<< "${corners[1]}"
+    
+    x1=$(parse_coord "$x1" "$video_width") || return 1
+    y1=$(parse_coord "$y1" "$video_height") || return 1
+    x2=$(parse_coord "$x2" "$video_width") || return 1
+    y2=$(parse_coord "$y2" "$video_height") || return 1
+    
+    local min_x=$(( x1 < x2 ? x1 : x2 ))
+    local min_y=$(( y1 < y2 ? y1 : y2 ))
+    local max_x=$(( x1 > x2 ? x1 : x2 ))
+    local max_y=$(( y1 > y2 ? y1 : y2 ))
+    
+    echo "$min_x $min_y $max_x $max_y $(( max_x - min_x )) $(( max_y - min_y ))"
+}
+
+# ============================================================================
+# Time/Frame Parsing
+# ============================================================================
+
+time_to_seconds() {
+    local time_str="$1"
+    local fps="${2:-}"
+    
+    # Internal format
+    [[ "$time_str" =~ ^seconds:([0-9]+\.?[0-9]*)$ ]] && echo "${BASH_REMATCH[1]}" && return 0
+    if [[ "$time_str" =~ ^frame:([0-9]+\.?[0-9]*)$ ]]; then
+        [[ -n "$fps" ]] && echo "${BASH_REMATCH[1]}" | awk -v fps="$fps" '{printf "%.6f", $1/fps}' || echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    
+    # Frame number (f prefix)
+    if [[ "$time_str" =~ ^f([0-9]+\.?[0-9]*)$ ]]; then
+        [[ -n "$fps" ]] && echo "${BASH_REMATCH[1]}" | awk -v fps="$fps" '{printf "%.6f", $1/fps}' || echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    
+    # Hours:Minutes:Seconds
+    if [[ "$time_str" =~ ^([0-9]+):([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
+        echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} ${BASH_REMATCH[3]}" | awk '{printf "%.6f", $1*3600 + $2*60 + $3}'
+        return 0
+    fi
+    
+    # Minutes:Seconds
+    if [[ "$time_str" =~ ^([0-9]+):([0-9]+\.?[0-9]*)$ ]]; then
+        echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" | awk '{printf "%.6f", $1*60 + $2}'
+        return 0
+    fi
+    
+    # Seconds
+    if [[ "$time_str" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        echo "$time_str"
+        return 0
+    fi
+    
+    error "Invalid time: $time_str"
+    return 1
+}
+
+parse_time() {
+    local time_str="$1"
+    [[ "$time_str" =~ ^f([0-9]+\.?[0-9]*)$ ]] && echo "frame:${BASH_REMATCH[1]}" && return 0
+    local seconds
+    seconds=$(time_to_seconds "$time_str") || return 1
+    echo "seconds:$seconds"
+}
+
+parse_opacity() {
+    local opacity_str="$1"
+    [[ "$opacity_str" =~ ^([0-9]+\.?[0-9]*)%$ ]] && echo "${BASH_REMATCH[1]}" | awk '{printf "%.2f", $1/100}' && return 0
+    [[ "$opacity_str" =~ ^[0-9]+\.?[0-9]*$ ]] && echo "$opacity_str" && return 0
+    error "Invalid opacity: $opacity_str"
+    return 1
+}
+
+# ============================================================================
+# Video Info Helpers
+# ============================================================================
+
+get_video_info() {
+    ffprobe -v quiet -select_streams v:0 -show_entries "stream=$2" -of csv=p=0 "$1" 2>/dev/null
+}
+
+get_video_width() { get_video_info "$1" "width"; }
+get_video_height() { get_video_info "$1" "height"; }
+get_duration() { ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null; }
+
+get_video_fps() {
+    local fps_str
+    fps_str=$(get_video_info "$1" "r_frame_rate")
+    [[ "$fps_str" =~ ^([0-9]+)/([0-9]+)$ ]] && echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" | awk '{printf "%.6f", $1/$2}' || echo "$fps_str"
+}
+
+load_params_file() {
+    local file="$1"
+    local -n result_array=$2
+    [[ ! -f "$file" ]] && error "File not found: $file" && return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        line=$(echo "$line" | xargs)
+        for word in $line; do result_array+=("$word"); done
+    done < "$file"
+}
+
+# ============================================================================
+# pic Command
+# ============================================================================
+
+cmd_pic() {
+    local input="" output="" param_file=""
+    local pictures=() pic_ats=() pic_durations=() pic_rects=()
+    local global_mode="aspect-fit" global_opacity="1.0"
+    local at="seconds:0" duration="seconds:3" rect=""
+
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_pic_help && exit 0; done
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose) VERBOSE=true; shift ;;
-            --width) target_width="$2"; shift 2 ;;
-            --height) target_height="$2"; shift 2 ;;
-            --scale) scale="$2"; shift 2 ;;
-            -*) error "Unknown option: $1"; show_resize_help; exit 1 ;;
+            --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
+            --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
+            --rect) rect="$2 $3"; shift 3 ;;
+            --mode) global_mode="$2"; shift 2 ;;
+            --opacity) global_opacity=$(parse_opacity "$2") || exit 1; shift 2 ;;
+            --file) param_file="$2"; shift 2 ;;
+            -*) error "Unknown: $1"; exit 1 ;;
             *)
-                if [[ -z "$input" ]]; then input="$1"
+                if [[ "$1" =~ \.(jpg|jpeg|png|gif|bmp|tiff|webp)$ ]]; then
+                    pictures+=("$1"); pic_ats+=("$at"); pic_durations+=("$duration"); pic_rects+=("$rect")
+                elif [[ -z "$input" ]]; then input="$1"
                 elif [[ -z "$output" ]]; then output="$1"
-                else error "Unexpected argument: $1"; exit 1
-                fi
-                shift
-                ;;
+                else error "Unexpected: $1"; exit 1; fi
+                shift ;;
         esac
     done
 
-    [[ -z "$input" ]] && error "Missing INPUT" && show_resize_help && exit 1
-    [[ -z "$output" ]] && error "Missing OUTPUT" && show_resize_help && exit 1
-    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
-    [[ -z "$target_width" && -z "$target_height" && -z "$scale" ]] && error "Specify --width, --height, or --scale" && exit 1
+    [[ -z "$input" ]] && error "Missing INPUT" && exit 1
+    [[ -z "$output" ]] && error "Missing OUTPUT" && exit 1
+    [[ ${#pictures[@]} -eq 0 ]] && error "Missing PICTURE" && exit 1
+    for i in "${!pictures[@]}"; do [[ -z "${pic_rects[$i]}" ]] && error "Missing --rect for ${pictures[$i]}" && exit 1; done
+    [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
+    for pic in "${pictures[@]}"; do [[ ! -f "$pic" ]] && error "Not found: $pic" && exit 1; done
+
+    local vid_width vid_height fps
+    vid_width=$(get_video_width "$input") || exit 1
+    vid_height=$(get_video_height "$input") || exit 1
+    fps=$(get_video_fps "$input")
+
+    local input_args=(-i "$input")
+    for pic in "${pictures[@]}"; do input_args+=(-i "$pic"); done
+
+    local filters="" last_label="[0:v]" input_idx=1
+    for i in "${!pictures[@]}"; do
+        local coords start_s end_s
+        coords=$(parse_rect "${pic_rects[$i]}" "$vid_width" "$vid_height") || exit 1
+        local x1 y1 _ _ rect_w rect_h
+        read -r x1 y1 _ _ rect_w rect_h <<< "$coords"
+        start_s=$(time_to_seconds "${pic_ats[$i]}" "$fps")
+        end_s=$(echo "$start_s $(time_to_seconds "${pic_durations[$i]}" "$fps")" | awk '{printf "%.6f", $1+$2}')
+
+        info "${pictures[$i]}: at=${start_s}s, rect=${x1},${y1} (${rect_w}x${rect_h})"
+
+        filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba[ovr${i}];"
+        [[ "$global_opacity" != "1.0" ]] && filters+="[ovr${i}]colorchannelmixer=aa=${global_opacity}[ovr${i}];"
+        filters+="${last_label}[ovr${i}]overlay=${x1}:${y1}:enable='between(t\\,${start_s}\\,${end_s})'[v${input_idx}];"
+        last_label="[v${input_idx}]"
+        input_idx=$((input_idx + 1))
+    done
+    filters="${filters%;}"
 
     local loglevel="warning"
     [[ "$VERBOSE" == "true" ]] && loglevel="info"
 
-    # Get current dimensions
-    local cur_width cur_height
-    cur_width=$(get_video_width "$input")
-    cur_height=$(get_video_height "$input")
+    ffmpeg -y -loglevel "$loglevel" "${input_args[@]}" -filter_complex "$filters" -map "$last_label" -map "0:a?" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+}
 
-    # Calculate dimensions
-    if [[ -n "$scale" ]]; then
-        target_width=$(echo "$cur_width $scale" | awk '{printf "%.0f", $1 * $2}')
-        target_height=$(echo "$cur_height $scale" | awk '{printf "%.0f", $1 * $2}')
-    elif [[ -n "$target_width" && -z "$target_height" ]]; then
-        target_height=$(echo "$cur_height $target_width $cur_width" | awk '{printf "%.0f", $1 * $2 / $3}')
-    elif [[ -z "$target_width" && -n "$target_height" ]]; then
-        target_width=$(echo "$cur_width $target_height $cur_height" | awk '{printf "%.0f", $1 * $2 / $3}')
+# ============================================================================
+# text Command (with ImageMagick fallback)
+# ============================================================================
+
+cmd_text() {
+    local input="" output="" text="" at="seconds:0" duration="seconds:3"
+    local rect="" color="white" size="48" font="" bold=false outline="" bg_color=""
+
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_text_help && exit 0; done
+
+    local has_drawtext=false has_magick=false
+    ffmpeg -filters 2>/dev/null | grep -q drawtext && has_drawtext=true
+    command -v convert &>/dev/null && has_magick=true
+    command -v magick &>/dev/null && has_magick=true
+
+    if [[ "$has_drawtext" == "false" && "$has_magick" == "false" ]]; then
+        error "Need ffmpeg drawtext or ImageMagick. Install: brew install imagemagick"
+        exit 1
     fi
 
-    # Make dimensions even (required by many codecs)
-    target_width=$(( target_width / 2 * 2 ))
-    target_height=$(( target_height / 2 * 2 ))
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -v|--verbose) VERBOSE=true; shift ;;
+            --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
+            --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
+            --rect) rect="$2 $3"; shift 3 ;;
+            --color) color="$2"; shift 2 ;;
+            --size) size="$2"; shift 2 ;;
+            --font) font="$2"; shift 2 ;;
+            --bold) bold=true; shift ;;
+            --outline) outline="$2"; shift 2 ;;
+            --bg-color) bg_color="$2"; shift 2 ;;
+            -*) error "Unknown: $1"; exit 1 ;;
+            *)
+                if [[ -z "$input" ]]; then input="$1"
+                elif [[ -z "$output" ]]; then output="$1"
+                elif [[ -z "$text" ]]; then text="$1"
+                else error "Unexpected: $1"; exit 1; fi
+                shift ;;
+        esac
+    done
 
-    info "Resizing: ${cur_width}x${cur_height} -> ${target_width}x${target_height}"
+    [[ -z "$input" ]] && error "Missing INPUT" && exit 1
+    [[ -z "$output" ]] && error "Missing OUTPUT" && exit 1
+    [[ -z "$text" ]] && error "Missing TEXT" && exit 1
+    [[ -z "$rect" ]] && error "Missing --rect" && exit 1
+    [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
 
-    local ffmpeg_cmd=(
-        ffmpeg -y -loglevel "$loglevel"
-        -i "$input"
-        -vf "scale=${target_width}:${target_height}"
-        -c:a copy -stats "$output"
-    )
+    local width height fps
+    width=$(get_video_width "$input") || exit 1
+    height=$(get_video_height "$input") || exit 1
+    fps=$(get_video_fps "$input")
 
-    [[ "$VERBOSE" == "true" ]] && info "Command: ${ffmpeg_cmd[*]}"
-    
-    "${ffmpeg_cmd[@]}"
-    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
+    local coords x1 y1 _ _ rect_w rect_h
+    coords=$(parse_rect "$rect" "$width" "$height") || exit 1
+    read -r x1 y1 _ _ rect_w rect_h <<< "$coords"
+
+    # ImageMagick fallback
+    if [[ "$has_drawtext" == "false" ]]; then
+        info "Using ImageMagick fallback..."
+        local tmp_img=$(mktemp /tmp/edit_text_XXXXXX.png)
+        trap "rm -f '$tmp_img'" EXIT
+
+        local magick_cmd="convert"
+        command -v magick &>/dev/null && magick_cmd="magick"
+
+        local opts="-size ${rect_w}x${rect_h} xc:none -fill ${color} -pointsize ${size} -gravity center"
+        [[ "$bold" == "true" ]] && opts+=" -weight Bold"
+        [[ -n "$font" ]] && opts+=" -font '$font'"
+
+        eval $magick_cmd $opts -annotate +0+0 "\"${text}\"" "\"$tmp_img\"" 2>/dev/null
+
+        cmd_pic "$input" "$output" "$tmp_img" --at "$at" --duration "$duration" --rect "$rect"
+        rm -f "$tmp_img"
+        return
+    fi
+
+    # drawtext filter
+    local escaped="$text"
+    escaped="${escaped//\\/\\\\}"; escaped="${escaped//\'/\\\'}"; escaped="${escaped//:/\\:}"
+    escaped="${escaped//;/\\;}"; escaped="${escaped//[/\\[}"; escaped="${escaped//]/\\]}"
+
+    local opts="text='${escaped}':fontsize=${size}:fontcolor=${color}"
+    [[ -n "$font" ]] && opts+=":font='${font}'"
+    [[ "$bold" == "true" ]] && opts+=":fontcolor_expr=${color}@1|bold"
+    opts+=":x=${x1}+(${rect_w}-text_w)/2:y=${y1}+(${rect_h}-text_h)/2"
+    [[ -n "$bg_color" ]] && opts+=":box=1:boxcolor=${bg_color}@0.8"
+    if [[ -n "$outline" ]]; then
+        IFS=':' read -r ow oc <<< "$outline"
+        opts+=":borderw=${ow}:bordercolor=${oc:-black}"
+    fi
+
+    local start_s end_s
+    start_s=$(time_to_seconds "$at" "$fps")
+    end_s=$(echo "$start_s $(time_to_seconds "$duration" "$fps")" | awk '{printf "%.6f", $1+$2}')
+    opts+=":enable='between(t\\,${start_s}\\,${end_s})'"
+
+    local filters="[0:v]drawtext=${opts}[out]"
+    local loglevel="warning"
+    [[ "$VERBOSE" == "true" ]] && loglevel="info"
+
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filters" -map "[out]" -map "0:a?" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# stat Command
+# ============================================================================
+
+display_stat() {
+    local input="$1" json_output="$2"
+    [[ ! -f "$input" ]] && error "Not found: $input" && return 1
+
+    local file_size
+    [[ "$(uname)" == "Darwin" ]] && file_size=$(stat -f%z "$input" 2>/dev/null || echo "unknown") || file_size=$(stat -c%s "$input" 2>/dev/null || echo "unknown")
+    local size_human
+    [[ "$file_size" != "unknown" ]] && size_human=$(numfmt --to=iec-i --suffix=B "$file_size" 2>/dev/null || echo "${file_size} bytes") || size_human="unknown"
+
+    local codec width height fps duration pixel_format bitrate format_name frames
+    format_name=$(ffprobe -v quiet -show_entries format=format_name -of csv=p=0 "$input" 2>/dev/null | tr -d '"' || echo "N/A")
+    codec=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+    width=$(get_video_width "$input" 2>/dev/null || echo "N/A")
+    height=$(get_video_height "$input" 2>/dev/null || echo "N/A")
+    fps=$(get_video_fps "$input" 2>/dev/null || echo "N/A")
+    duration=$(get_duration "$input" 2>/dev/null || echo "N/A")
+    pixel_format=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+    bitrate=$(ffprobe -v quiet -show_entries format=bit_rate -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+    frames=$(ffprobe -v quiet -select_streams v:0 -show_entries stream=nb_frames -of csv=p=0 "$input" 2>/dev/null || echo "N/A")
+
+    if [[ "$json_output" == "true" ]]; then
+        cat << EOF
+{"file":"$input","size":"$file_size","size_human":"$size_human","format":"$format_name","codec":"$codec","width":"$width","height":"$height","fps":"$fps","duration":"$duration","pixel_format":"$pixel_format","bitrate":"$bitrate"}
+EOF
+    else
+        echo ""
+        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e " ${GREEN}File:${NC}         $input"
+        echo -e " ${GREEN}Size:${NC}         $size_human"
+        echo -e " ${GREEN}Format:${NC}       $format_name"
+        [[ "$codec" != "N/A" ]] && echo -e " ${GREEN}Codec:${NC}        $codec"
+        [[ "$width" != "N/A" ]] && echo -e " ${GREEN}Resolution:${NC}   ${width} × ${height}"
+        [[ "$fps" != "N/A" ]] && echo -e " ${GREEN}Frame Rate:${NC}   $fps fps"
+        if [[ "$duration" != "N/A" ]]; then
+            local h m s
+            h=$(echo "$duration" | awk '{printf "%02d", int($1/3600)}')
+            m=$(echo "$duration" | awk '{printf "%02d", int($1/60)%60}')
+            s=$(echo "$duration" | awk '{printf "%06.3f", $1%60}')
+            echo -e " ${GREEN}Duration:${NC}     ${h}:${m}:${s}"
+        fi
+        [[ "$frames" != "N/A" ]] && echo -e " ${GREEN}Frames:${NC}       $frames"
+        [[ "$bitrate" != "N/A" ]] && echo -e " ${GREEN}Bitrate:${NC}      $(echo "$bitrate" | awk '{printf "%.0f", $1/1000}') kbps"
+        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    fi
+}
+
+cmd_stat() {
+    local files=() json_output=false
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_stat_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in --json) json_output=true; shift;; -v|--verbose) VERBOSE=true; shift;; -*) shift;; *) files+=("$1"); shift;; esac
+    done
+    [[ ${#files[@]} -eq 0 ]] && error "Missing FILE(s)" && exit 1
+    for file in "${files[@]}"; do [[ -f "$file" ]] && display_stat "$file" "$json_output" || error "Not found: $file"; done
+}
+
+# ============================================================================
+# crop Command
+# ============================================================================
+
+cmd_crop() {
+    local input="" output="" from_time="" to_time=""
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_crop_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --from) from_time="$2"; shift 2;; --to) to_time="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit crop INPUT OUTPUT --from TIME --to TIME" && exit 1
+    [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
+
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    local cmd=(ffmpeg -y -loglevel "$loglevel")
+    [[ -n "$from_time" ]] && cmd+=(-ss "$from_time")
+    cmd+=(-i "$input")
+    [[ -n "$to_time" ]] && cmd+=(-to "$to_time")
+    cmd+=(-c copy -stats "$output")
+
+    "${cmd[@]}" && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# cut Command
+# ============================================================================
+
+cmd_cut() {
+    local input="" output="" from_time="" to_time=""
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_cut_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --from) from_time="$2"; shift 2;; --to) to_time="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit cut INPUT OUTPUT --from/--to TIME" && exit 1
+    [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
+    [[ -z "$from_time" && -z "$to_time" ]] && error "Specify --from and/or --to" && exit 1
+
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    local filter=""
+    if [[ -n "$from_time" && -n "$to_time" ]]; then
+        filter="[0:v]trim=start=0:end=${from_time},setpts=PTS-STARTPTS[v1];[0:v]trim=start=${to_time},setpts=PTS-STARTPTS[v2];[v1][v2]concat=n=2:v=1:a=0[vout];"
+        filter+="[0:a]atrim=start=0:end=${from_time}[a1];[0:a]atrim=start=${to_time}[a2];[a1][a2]concat=n=2:v=0:a=1[aout]"
+    elif [[ -n "$to_time" ]]; then
+        filter="[0:v]trim=start=${to_time},setpts=PTS-STARTPTS[vout];[0:a]atrim=start=${to_time}[aout]"
+    else
+        filter="[0:v]trim=start=0:end=${from_time},setpts=PTS-STARTPTS[vout];[0:a]atrim=start=0:end=${from_time}[aout]"
+    fi
+
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filter" -map "[vout]" -map "[aout]" -stats "$output" && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# insert Command
+# ============================================================================
+
+cmd_insert() {
+    local main="" inserted="" output="" at_time="0"
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_insert_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --at) at_time="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$main" ]] && main="$1" || [[ -z "$inserted" ]] && inserted="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$main" || -z "$inserted" || -z "$output" ]] && error "Usage: edit insert MAIN INSERTED OUTPUT --at TIME" && exit 1
+    [[ ! -f "$main" || ! -f "$inserted" ]] && error "File not found" && exit 1
+
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    local filter="[0:v]trim=start=0:end=${at_time},setpts=PTS-STARTPTS[v1];[0:v]trim=start=${at_time},setpts=PTS-STARTPTS[v2];[1:v]setpts=PTS-STARTPTS[v3];"
+    filter+="[v1][v3][v2]concat=n=3:v=1:a=0[vout];"
+    filter+="[0:a]atrim=start=0:end=${at_time}[a1];[0:a]atrim=start=${at_time}[a2];[1:a]asetpts=PTS-STARTPTS[a3];"
+    filter+="[a1][a3][a2]concat=n=3:v=0:a=1[aout]"
+
+    ffmpeg -y -loglevel "$loglevel" -i "$main" -i "$inserted" -filter_complex "$filter" -map "[vout]" -map "[aout]" -stats "$output" && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# audio Command
+# ============================================================================
+
+cmd_audio() {
+    local input="" audio_src="" output="" at_time="0" duration="" mix_level="1.0"
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_audio_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --at) at_time="$2"; shift 2;; --duration) duration="$2"; shift 2;; --mix) mix_level=$(parse_opacity "$2") || exit 1; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || [[ -z "$audio_src" ]] && audio_src="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$input" || -z "$audio_src" || -z "$output" ]] && error "Usage: edit audio INPUT AUDIO OUTPUT --at TIME --mix LEVEL" && exit 1
+    [[ ! -f "$input" || ! -f "$audio_src" ]] && error "File not found" && exit 1
+
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    local orig_w new_w
+    orig_w=$(echo "1.0 $mix_level" | awk '{printf "%.2f", $1-$2}')
+    new_w="$mix_level"
+
+    local filter=""
+    if [[ -n "$duration" ]]; then
+        local end_t=$(echo "$at_time $duration" | awk '{printf "%.6f", $1+$2}')
+        filter="[1:a]atrim=start=0:end=${duration},asetpts=PTS-STARTPTS,volume=${new_w}[new];[0:a]volume=${orig_w}[orig];"
+        filter+="[orig][new]amix=inputs=2:duration=first:dropout_transition=0[mixed];"
+        filter+="[0:a]atrim=start=0:end=${at_time}[b];[0:a]atrim=start=${end_t}[a];[b][mixed][a]concat=n=3:v=0:a=1[aout]"
+    else
+        filter="[1:a]asetpts=PTS-STARTPTS,volume=${new_w}[new];[0:a]volume=${orig_w}[orig];"
+        filter+="[orig][new]amix=inputs=2:duration=first:dropout_transition=0[mixed];"
+        filter+="[0:a]atrim=start=0:end=${at_time}[b];[b][mixed]concat=n=2:v=0:a=1[aout]"
+    fi
+
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -i "$audio_src" -filter_complex "$filter" -map "0:v" -map "[aout]" -c:v copy -shortest -stats "$output" && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# resize Command
+# ============================================================================
+
+cmd_resize() {
+    local input="" output="" tw="" th="" scale=""
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_resize_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --width) tw="$2"; shift 2;; --height) th="$2"; shift 2;; --scale) scale="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit resize INPUT OUTPUT --width/--height/--scale" && exit 1
+    [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
+    [[ -z "$tw" && -z "$th" && -z "$scale" ]] && error "Specify --width, --height, or --scale" && exit 1
+
+    local cw ch
+    cw=$(get_video_width "$input"); ch=$(get_video_height "$input")
+    if [[ -n "$scale" ]]; then
+        tw=$(echo "$cw $scale" | awk '{printf "%.0f", $1*$2}')
+        th=$(echo "$ch $scale" | awk '{printf "%.0f", $1*$2}')
+    elif [[ -n "$tw" && -z "$th" ]]; then
+        th=$(echo "$ch $tw $cw" | awk '{printf "%.0f", $1*$2/$3}')
+    elif [[ -z "$tw" && -n "$th" ]]; then
+        tw=$(echo "$cw $th $ch" | awk '{printf "%.0f", $1*$2/$3}')
+    fi
+    tw=$(( tw / 2 * 2 )); th=$(( th / 2 * 2 ))
+
+    info "Resizing: ${cw}x${ch} -> ${tw}x${th}"
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "scale=${tw}:${th}" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
@@ -1836,76 +845,22 @@ cmd_resize() {
 # ============================================================================
 
 main() {
-    # Check for no arguments
-    if [[ $# -eq 0 ]]; then
-        show_help
-        exit 0
-    fi
-    
-    # Parse global options
+    [[ $# -eq 0 ]] && show_help && exit 0
     while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -h|--help)
-                show_help
-                exit 0
-                ;;
-            -y|--yes)
-                AUTO_YES=true
-                shift
-                ;;
-            -V|--version)
-                echo "edit version $VERSION"
-                exit 0
-                ;;
-            -v|--verbose)
-                VERBOSE=true
-                shift
-                ;;
-            *)
-                break
-                ;;
-        esac
+        case "$1" in -h|--help) show_help; exit 0;; -y|--yes) AUTO_YES=true; shift;; -V|--version) echo "edit version $VERSION"; exit 0;; -v|--verbose) VERBOSE=true; shift;; *) break;; esac
     done
-    
-    # Check dependencies
     check_dependencies
-    
-    # Parse command
-    local command="$1"
-    shift
-    
+    local command="$1"; shift
     case "$command" in
-        pic|picture|image)
-            cmd_pic "$@"
-            ;;
-        text)
-            cmd_text "$@"
-            ;;
-        stat|stats)
-            cmd_stat "$@"
-            ;;
-        crop)
-            cmd_crop "$@"
-            ;;
-        cut)
-            cmd_cut "$@"
-            ;;
-        insert)
-            cmd_insert "$@"
-            ;;
-        audio)
-            cmd_audio "$@"
-            ;;
-        resize)
-            cmd_resize "$@"
-            ;;
-        *)
-            error "Unknown command: $command"
-            echo ""
-            echo "Available commands: pic, text, stat, crop, cut, insert, audio, resize"
-            echo "Run 'edit --help' for more information."
-            exit 1
-            ;;
+        pic|picture|image) cmd_pic "$@";;
+        text) cmd_text "$@";;
+        stat|stats) cmd_stat "$@";;
+        crop) cmd_crop "$@";;
+        cut) cmd_cut "$@";;
+        insert) cmd_insert "$@";;
+        audio) cmd_audio "$@";;
+        resize) cmd_resize "$@";;
+        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, resize"; exit 1;;
     esac
 }
 
