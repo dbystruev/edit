@@ -276,11 +276,18 @@ USAGE:
 
 OPTIONS:
     --duration TIME Duration of fade effect (default: 3)
+    --target WHAT   What to fade: both (default), video, audio
     -v, --verbose   Show verbose output
 
 EXAMPLES:
-    # Fade in from black over 5 seconds
+    # Fade in both video and audio from black/silence over 5 seconds
     edit fade-in input.mp4 output.mp4 --duration 5
+
+    # Fade in only video (audio unchanged)
+    edit fade-in input.mp4 output.mp4 --target video
+
+    # Fade in only audio (video unchanged)
+    edit fade-in input.mp4 output.mp4 --target audio
 EOF
 }
 
@@ -293,11 +300,18 @@ USAGE:
 
 OPTIONS:
     --duration TIME Duration of fade effect (default: 3)
+    --target WHAT   What to fade: both (default), video, audio
     -v, --verbose   Show verbose output
 
 EXAMPLES:
-    # Fade out to black over 5 seconds
+    # Fade out both video and audio to black/silence over 5 seconds
     edit fade-out input.mp4 output.mp4 --duration 5
+
+    # Fade out only video (audio unchanged)
+    edit fade-out input.mp4 output.mp4 --target video
+
+    # Fade out only audio (video unchanged)
+    edit fade-out input.mp4 output.mp4 --target audio
 EOF
 }
 
@@ -1094,16 +1108,19 @@ cmd_audio() {
 # ============================================================================
 
 cmd_fadein() {
-    local input="" output="" duration="3"
+    local input="" output="" duration="3" target="both"
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_fadein_help && exit 0; done
     while [[ $# -gt 0 ]]; do
-        case "$1" in -v|--verbose) VERBOSE=true; shift;; --duration) duration="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --duration) duration="$2"; shift 2;; --target) target="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
     done
-    [[ -z "$input" || -z "$output" ]] && error "Usage: edit fade-in INPUT OUTPUT [--duration 3]" && exit 1
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit fade-in INPUT OUTPUT [--duration 3] [--target both|video|audio]" && exit 1
     [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
 
     local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
-    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "fade=t=in:st=0:d=${duration}" -c:v libx264 -crf 23 -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+    local vfilter="" afilter=""
+    [[ "$target" == "both" || "$target" == "video" ]] && vfilter="-vf fade=t=in:st=0:d=${duration}"
+    [[ "$target" == "both" || "$target" == "audio" ]] && afilter="-af afade=t=in:st=0:d=${duration}"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" $vfilter $afilter -c:v libx264 -crf 23 -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
@@ -1111,12 +1128,12 @@ cmd_fadein() {
 # ============================================================================
 
 cmd_fadeout() {
-    local input="" output="" duration="3"
+    local input="" output="" duration="3" target="both"
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_fadeout_help && exit 0; done
     while [[ $# -gt 0 ]]; do
-        case "$1" in -v|--verbose) VERBOSE=true; shift;; --duration) duration="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --duration) duration="$2"; shift 2;; --target) target="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
     done
-    [[ -z "$input" || -z "$output" ]] && error "Usage: edit fade-out INPUT OUTPUT [--duration 3]" && exit 1
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit fade-out INPUT OUTPUT [--duration 3] [--target both|video|audio]" && exit 1
     [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
 
     # Get video duration to calculate fade start time
@@ -1126,7 +1143,10 @@ cmd_fadeout() {
     fade_start=$(echo "$vid_duration $duration" | awk '{printf "%.6f", $1-$2}')
 
     local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
-    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "fade=t=out:st=${fade_start}:d=${duration}" -c:v libx264 -crf 23 -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+    local vfilter="" afilter=""
+    [[ "$target" == "both" || "$target" == "video" ]] && vfilter="-vf fade=t=out:st=${fade_start}:d=${duration}"
+    [[ "$target" == "both" || "$target" == "audio" ]] && afilter="-af afade=t=out:st=${fade_start}:d=${duration}"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" $vfilter $afilter -c:v libx264 -crf 23 -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
