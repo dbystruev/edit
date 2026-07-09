@@ -151,21 +151,27 @@ COMMANDS:
     pic                 Overlay an image onto a video
     text                Add text overlay to a video
     stat                Display detailed info about video/image files
+    crop                Extract a portion of video by time
+    cut                 Remove a portion of video by time
+    insert              Insert another video at a timestamp
+    audio               Replace or mix audio at a timestamp
+    resize              Resize video dimensions
 
 EXAMPLES:
-    # Insert a logo on a video for 10 seconds starting at 5s
-    edit pic input.mp4 output.mp4 logo.png \
-        --at 5 --duration 10 --rect 10%,10% 90%,90%
+    # Crop video from 10s to 30s
+    edit crop input.mp4 output.mp4 --from 10 --to 30
 
-    # Insert text with red color and size 72
-    edit text input.mp4 output.mp4 "Hello World" \
-        --at 2 --duration 5 --color red --size 72
+    # Cut (remove) section from 15s to 25s
+    edit cut input.mp4 output.mp4 --from 15 --to 25
 
-    # Get video stats (supports multiple files and wildcards)
-    edit stat input.mp4 *.jpeg
+    # Insert video2 at 10s into video1
+    edit insert video1.mp4 video2.mp4 output.mp4 --at 10
 
-    # Debug mode
-    edit -v pic input.mp4 output.mp4 logo.png --at 0 --rect 0,0 100%,100%
+    # Replace audio from 5s with another file
+    edit audio input.mp4 output.mp4 new_audio.mp3 --at 5 --duration 10
+
+    # Resize to 1280x720
+    edit resize input.mp4 output.mp4 --width 1280 --height 720
 
 RUN WITHOUT ARGUMENTS to see this help.
 
@@ -1223,6 +1229,507 @@ cmd_stat() {
 }
 
 # ============================================================================
+# crop Command - Extract portion of video
+# ============================================================================
+
+show_crop_help() {
+    cat << 'EOF'
+edit crop - Extract a portion of video by time
+
+USAGE:
+    edit crop INPUT OUTPUT [OPTIONS]
+
+ARGUMENTS:
+    INPUT           Input video file
+    OUTPUT          Output video file
+
+OPTIONS:
+    --from TIME     Start time (seconds or HH:MM:SS). Default: beginning
+    --to TIME       End time (seconds or HH:MM:SS). Default: end
+    -v, --verbose   Show verbose output
+
+EXAMPLES:
+    # Extract from 10s to 30s
+    edit crop input.mp4 output.mp4 --from 10 --to 30
+
+    # Extract from start to 15s
+    edit crop input.mp4 output.mp4 --to 15
+
+    # Extract from 45s to end
+    edit crop input.mp4 output.mp4 --from 45
+EOF
+}
+
+cmd_crop() {
+    local input=""
+    local output=""
+    local from_time=""
+    local to_time=""
+
+    for arg in "$@"; do
+        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+            show_crop_help
+            exit 0
+        fi
+    done
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -v|--verbose) VERBOSE=true; shift ;;
+            --from) from_time="$2"; shift 2 ;;
+            --to) to_time="$2"; shift 2 ;;
+            -*) error "Unknown option: $1"; show_crop_help; exit 1 ;;
+            *)
+                if [[ -z "$input" ]]; then input="$1"
+                elif [[ -z "$output" ]]; then output="$1"
+                else error "Unexpected argument: $1"; exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    [[ -z "$input" ]] && error "Missing INPUT" && show_crop_help && exit 1
+    [[ -z "$output" ]] && error "Missing OUTPUT" && show_crop_help && exit 1
+    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
+
+    local loglevel="warning"
+    [[ "$VERBOSE" == "true" ]] && loglevel="info"
+
+    local ffmpeg_cmd=(ffmpeg -y -loglevel "$loglevel")
+    
+    [[ -n "$from_time" ]] && ffmpeg_cmd+=(-ss "$from_time")
+    ffmpeg_cmd+=(-i "$input")
+    [[ -n "$to_time" ]] && ffmpeg_cmd+=(-to "$to_time")
+    
+    ffmpeg_cmd+=(-c copy -stats "$output")
+
+    [[ "$VERBOSE" == "true" ]] && info "Command: ${ffmpeg_cmd[*]}"
+    
+    "${ffmpeg_cmd[@]}"
+    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# cut Command - Remove portion of video
+# ============================================================================
+
+show_cut_help() {
+    cat << 'EOF'
+edit cut - Remove a portion of video by time
+
+USAGE:
+    edit cut INPUT OUTPUT [OPTIONS]
+
+ARGUMENTS:
+    INPUT           Input video file
+    OUTPUT          Output video file
+
+OPTIONS:
+    --from TIME     Start of section to remove (seconds or HH:MM:SS)
+    --to TIME       End of section to remove (seconds or HH:MM:SS)
+    -v, --verbose   Show verbose output
+
+EXAMPLES:
+    # Remove section from 15s to 25s
+    edit cut input.mp4 output.mp4 --from 15 --to 25
+
+    # Remove from 30s to end
+    edit cut input.mp4 output.mp4 --from 30
+
+    # Remove from start to 10s
+    edit cut input.mp4 output.mp4 --to 10
+EOF
+}
+
+cmd_cut() {
+    local input=""
+    local output=""
+    local from_time=""
+    local to_time=""
+
+    for arg in "$@"; do
+        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+            show_cut_help
+            exit 0
+        fi
+    done
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -v|--verbose) VERBOSE=true; shift ;;
+            --from) from_time="$2"; shift 2 ;;
+            --to) to_time="$2"; shift 2 ;;
+            -*) error "Unknown option: $1"; show_cut_help; exit 1 ;;
+            *)
+                if [[ -z "$input" ]]; then input="$1"
+                elif [[ -z "$output" ]]; then output="$1"
+                else error "Unexpected argument: $1"; exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    [[ -z "$input" ]] && error "Missing INPUT" && show_cut_help && exit 1
+    [[ -z "$output" ]] && error "Missing OUTPUT" && show_cut_help && exit 1
+    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
+    [[ -z "$from_time" && -z "$to_time" ]] && error "Specify --from and/or --to" && exit 1
+
+    local loglevel="warning"
+    [[ "$VERBOSE" == "true" ]] && loglevel="info"
+
+    # Get duration
+    local duration
+    duration=$(get_duration "$input")
+
+    local filter=""
+    if [[ -n "$from_time" && -n "$to_time" ]]; then
+        # Cut middle section: keep 0-from and to-end
+        filter="[0:v]trim=start=0:end=${from_time},setpts=PTS-STARTPTS[v1];"
+        filter+="[0:v]trim=start=${to_time},setpts=PTS-STARTPTS[v2];"
+        filter+="[v1][v2]concat=n=2:v=1:a=0[vout];"
+        filter+="[0:a]atrim=start=0:end=${from_time}[a1];"
+        filter+="[0:a]atrim=start=${to_time}[a2];"
+        filter+="[a1][a2]concat=n=2:v=0:a=1[aout]"
+    elif [[ -n "$to_time" ]]; then
+        # Cut from start to to_time
+        filter="[0:v]trim=start=${to_time},setpts=PTS-STARTPTS[vout];"
+        filter+="[0:a]atrim=start=${to_time}[aout]"
+    elif [[ -n "$from_time" ]]; then
+        # Cut from from_time to end
+        filter="[0:v]trim=start=0:end=${from_time},setpts=PTS-STARTPTS[vout];"
+        filter+="[0:a]atrim=start=0:end=${from_time}[aout]"
+    fi
+
+    local ffmpeg_cmd=(
+        ffmpeg -y -loglevel "$loglevel"
+        -i "$input"
+        -filter_complex "$filter"
+        -map "[vout]" -map "[aout]"
+        -stats "$output"
+    )
+
+    [[ "$VERBOSE" == "true" ]] && info "Filter: $filter"
+    
+    "${ffmpeg_cmd[@]}"
+    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# insert Command - Insert video at timestamp
+# ============================================================================
+
+show_insert_help() {
+    cat << 'EOF'
+edit insert - Insert another video at a timestamp
+
+USAGE:
+    edit insert MAIN INSERTED OUTPUT [OPTIONS]
+
+ARGUMENTS:
+    MAIN            Main video file
+    INSERTED        Video to insert
+    OUTPUT          Output video file
+
+OPTIONS:
+    --at TIME       Timestamp to insert at (seconds or HH:MM:SS). Default: 0
+    -v, --verbose   Show verbose output
+
+EXAMPLES:
+    # Insert video2 at 10s into video1
+    edit insert video1.mp4 video2.mp4 output.mp4 --at 10
+
+    # Insert at beginning
+    edit insert main.mp4 intro.mp4 output.mp4 --at 0
+EOF
+}
+
+cmd_insert() {
+    local main=""
+    local inserted=""
+    local output=""
+    local at_time="0"
+
+    for arg in "$@"; do
+        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+            show_insert_help
+            exit 0
+        fi
+    done
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -v|--verbose) VERBOSE=true; shift ;;
+            --at) at_time="$2"; shift 2 ;;
+            -*) error "Unknown option: $1"; show_insert_help; exit 1 ;;
+            *)
+                if [[ -z "$main" ]]; then main="$1"
+                elif [[ -z "$inserted" ]]; then inserted="$1"
+                elif [[ -z "$output" ]]; then output="$1"
+                else error "Unexpected argument: $1"; exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    [[ -z "$main" ]] && error "Missing MAIN video" && show_insert_help && exit 1
+    [[ -z "$inserted" ]] && error "Missing INSERTED video" && show_insert_help && exit 1
+    [[ -z "$output" ]] && error "Missing OUTPUT" && show_insert_help && exit 1
+    [[ ! -f "$main" ]] && error "File not found: $main" && exit 1
+    [[ ! -f "$inserted" ]] && error "File not found: $inserted" && exit 1
+
+    local loglevel="warning"
+    [[ "$VERBOSE" == "true" ]] && loglevel="info"
+
+    # Split main at insertion point, concat with inserted video
+    local filter="[0:v]trim=start=0:end=${at_time},setpts=PTS-STARTPTS[v1];"
+    filter+="[0:v]trim=start=${at_time},setpts=PTS-STARTPTS[v2];"
+    filter+="[1:v]setpts=PTS-STARTPTS[v3];"
+    filter+="[v1][v3][v2]concat=n=3:v=1:a=0[vout];"
+    filter+="[0:a]atrim=start=0:end=${at_time}[a1];"
+    filter+="[0:a]atrim=start=${at_time}[a2];"
+    filter+="[1:a]asetpts=PTS-STARTPTS[a3];"
+    filter+="[a1][a3][a2]concat=n=3:v=0:a=1[aout]"
+
+    local ffmpeg_cmd=(
+        ffmpeg -y -loglevel "$loglevel"
+        -i "$main" -i "$inserted"
+        -filter_complex "$filter"
+        -map "[vout]" -map "[aout]"
+        -stats "$output"
+    )
+
+    [[ "$VERBOSE" == "true" ]] && info "Filter: $filter"
+    
+    "${ffmpeg_cmd[@]}"
+    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# audio Command - Replace or mix audio
+# ============================================================================
+
+show_audio_help() {
+    cat << 'EOF'
+edit audio - Replace or mix audio at a timestamp
+
+USAGE:
+    edit audio INPUT AUDIO_OR_VIDEO OUTPUT [OPTIONS]
+
+ARGUMENTS:
+    INPUT           Input video file
+    AUDIO_OR_VIDEO  Audio file or video (audio extracted)
+    OUTPUT          Output video file
+
+OPTIONS:
+    --at TIME       Start time for new audio (seconds or HH:MM:SS). Default: 0
+    --duration TIME Duration of new audio (seconds). Default: full length
+    --mix LEVEL     Mix level: 0.0-1.0 or 0%-100%. Default: 1.0 (full replacement)
+                    1.0 = new audio only
+                    0.5 = 50/50 mix
+                    0.0 = original audio only
+    -v, --verbose   Show verbose output
+
+EXAMPLES:
+    # Replace audio from 5s for 10s
+    edit audio input.mp4 new_audio.mp3 output.mp4 --at 5 --duration 10
+
+    # Mix at 50% from 10s
+    edit audio input.mp4 music.mp3 output.mp4 --at 10 --mix 0.5
+
+    # Full replacement from start
+    edit audio input.mp4 narration.wav output.mp4 --mix 1.0
+EOF
+}
+
+cmd_audio() {
+    local input=""
+    local audio_source=""
+    local output=""
+    local at_time="0"
+    local duration=""
+    local mix_level="1.0"
+
+    for arg in "$@"; do
+        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+            show_audio_help
+            exit 0
+        fi
+    done
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -v|--verbose) VERBOSE=true; shift ;;
+            --at) at_time="$2"; shift 2 ;;
+            --duration) duration="$2"; shift 2 ;;
+            --mix) mix_level=$(parse_opacity "$2") || exit 1; shift 2 ;;
+            -*) error "Unknown option: $1"; show_audio_help; exit 1 ;;
+            *)
+                if [[ -z "$input" ]]; then input="$1"
+                elif [[ -z "$audio_source" ]]; then audio_source="$1"
+                elif [[ -z "$output" ]]; then output="$1"
+                else error "Unexpected argument: $1"; exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    [[ -z "$input" ]] && error "Missing INPUT" && show_audio_help && exit 1
+    [[ -z "$audio_source" ]] && error "Missing AUDIO source" && show_audio_help && exit 1
+    [[ -z "$output" ]] && error "Missing OUTPUT" && show_audio_help && exit 1
+    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
+    [[ ! -f "$audio_source" ]] && error "File not found: $audio_source" && exit 1
+
+    local loglevel="warning"
+    [[ "$VERBOSE" == "true" ]] && loglevel="info"
+
+    # Calculate mix weights
+    local orig_weight=$(echo "1.0 $mix_level" | awk '{printf "%.2f", $1 - $2}')
+    local new_weight="$mix_level"
+
+    local filter=""
+    if [[ -n "$duration" ]]; then
+        # Mix at specific time for specific duration
+        filter="[1:a]atrim=start=0:end=${duration},asetpts=PTS-STARTPTS,volume=${new_weight}[new];"
+        filter+="[0:a]volume=${orig_weight}[orig];"
+        filter+="[orig][new]amix=inputs=2:duration=first:dropout_transition=0[mixed];"
+        filter+="[0:a]atrim=start=0:end=${at_time}[before];"
+        filter+="[0:a]atrim=start=$(echo "$at_time $duration" | awk '{printf "%.6f", $1 + $2}')[after];"
+        filter+="[before][mixed][after]concat=n=3:v=0:a=1[aout]"
+    else
+        # Mix from at_time to end
+        filter="[1:a]asetpts=PTS-STARTPTS,volume=${new_weight}[new];"
+        filter+="[0:a]volume=${orig_weight}[orig];"
+        filter+="[orig][new]amix=inputs=2:duration=first:dropout_transition=0[mixed];"
+        filter+="[0:a]atrim=start=0:end=${at_time}[before];"
+        filter+="[before][mixed]concat=n=2:v=0:a=1[aout]"
+    fi
+
+    local ffmpeg_cmd=(
+        ffmpeg -y -loglevel "$loglevel"
+        -i "$input" -i "$audio_source"
+        -filter_complex "$filter"
+        -map "0:v" -map "[aout]"
+        -c:v copy -shortest
+        -stats "$output"
+    )
+
+    [[ "$VERBOSE" == "true" ]] && info "Filter: $filter"
+    
+    "${ffmpeg_cmd[@]}"
+    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# resize Command - Resize video
+# ============================================================================
+
+show_resize_help() {
+    cat << 'EOF'
+edit resize - Resize video dimensions
+
+USAGE:
+    edit resize INPUT OUTPUT [OPTIONS]
+
+ARGUMENTS:
+    INPUT           Input video file
+    OUTPUT          Output video file
+
+OPTIONS:
+    --width W       Target width. If omitted, calculated from height
+    --height H      Target height. If omitted, calculated from width
+    --scale P       Scale factor (e.g., 0.5 for half, 2.0 for double)
+    -v, --verbose   Show verbose output
+
+EXAMPLES:
+    # Resize to 1280x720
+    edit resize input.mp4 output.mp4 --width 1280 --height 720
+
+    # Resize to half size
+    edit resize input.mp4 output.mp4 --scale 0.5
+
+    # Resize to 720p width (height calculated)
+    edit resize input.mp4 output.mp4 --width 1280
+EOF
+}
+
+cmd_resize() {
+    local input=""
+    local output=""
+    local target_width=""
+    local target_height=""
+    local scale=""
+
+    for arg in "$@"; do
+        if [[ "$arg" == "-h" || "$arg" == "--help" ]]; then
+            show_resize_help
+            exit 0
+        fi
+    done
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -v|--verbose) VERBOSE=true; shift ;;
+            --width) target_width="$2"; shift 2 ;;
+            --height) target_height="$2"; shift 2 ;;
+            --scale) scale="$2"; shift 2 ;;
+            -*) error "Unknown option: $1"; show_resize_help; exit 1 ;;
+            *)
+                if [[ -z "$input" ]]; then input="$1"
+                elif [[ -z "$output" ]]; then output="$1"
+                else error "Unexpected argument: $1"; exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    [[ -z "$input" ]] && error "Missing INPUT" && show_resize_help && exit 1
+    [[ -z "$output" ]] && error "Missing OUTPUT" && show_resize_help && exit 1
+    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
+    [[ -z "$target_width" && -z "$target_height" && -z "$scale" ]] && error "Specify --width, --height, or --scale" && exit 1
+
+    local loglevel="warning"
+    [[ "$VERBOSE" == "true" ]] && loglevel="info"
+
+    # Get current dimensions
+    local cur_width cur_height
+    cur_width=$(get_video_width "$input")
+    cur_height=$(get_video_height "$input")
+
+    # Calculate dimensions
+    if [[ -n "$scale" ]]; then
+        target_width=$(echo "$cur_width $scale" | awk '{printf "%.0f", $1 * $2}')
+        target_height=$(echo "$cur_height $scale" | awk '{printf "%.0f", $1 * $2}')
+    elif [[ -n "$target_width" && -z "$target_height" ]]; then
+        target_height=$(echo "$cur_height $target_width $cur_width" | awk '{printf "%.0f", $1 * $2 / $3}')
+    elif [[ -z "$target_width" && -n "$target_height" ]]; then
+        target_width=$(echo "$cur_width $target_height $cur_height" | awk '{printf "%.0f", $1 * $2 / $3}')
+    fi
+
+    # Make dimensions even (required by many codecs)
+    target_width=$(( target_width / 2 * 2 ))
+    target_height=$(( target_height / 2 * 2 ))
+
+    info "Resizing: ${cur_width}x${cur_height} -> ${target_width}x${target_height}"
+
+    local ffmpeg_cmd=(
+        ffmpeg -y -loglevel "$loglevel"
+        -i "$input"
+        -vf "scale=${target_width}:${target_height}"
+        -c:a copy -stats "$output"
+    )
+
+    [[ "$VERBOSE" == "true" ]] && info "Command: ${ffmpeg_cmd[*]}"
+    
+    "${ffmpeg_cmd[@]}"
+    [[ $? -eq 0 ]] && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -1275,10 +1782,25 @@ main() {
         stat|stats)
             cmd_stat "$@"
             ;;
+        crop)
+            cmd_crop "$@"
+            ;;
+        cut)
+            cmd_cut "$@"
+            ;;
+        insert)
+            cmd_insert "$@"
+            ;;
+        audio)
+            cmd_audio "$@"
+            ;;
+        resize)
+            cmd_resize "$@"
+            ;;
         *)
             error "Unknown command: $command"
             echo ""
-            echo "Available commands: pic, text, stat"
+            echo "Available commands: pic, text, stat, crop, cut, insert, audio, resize"
             echo "Run 'edit --help' for more information."
             exit 1
             ;;
