@@ -1245,7 +1245,7 @@ cmd_split() {
         local output="${prefix}_${segment_num}.${ext}"
         
         info "Segment $segment_num: ${start_time}s to ${end_time}s -> $output"
-        ffmpeg -y -loglevel "$loglevel" -i "$input" -ss "$start_time" -to "$end_time" -c copy -stats "$output" && success "Created: $output" || error "Failed to create $output"
+        ffmpeg -y -loglevel "$loglevel" -i "$input" -ss "$start_time" -to "$end_time" -c:v libx264 -crf 23 -c:a aac -stats "$output" && success "Created: $output" || error "Failed to create $output"
     done
 }
 
@@ -1288,7 +1288,7 @@ cmd_join() {
     
     info "Joining ${#inputs[@]} clips into $output"
     
-    ffmpeg -y -loglevel "$loglevel" -f concat -safe 0 -i "$concat_file" -c copy -stats "$output"
+    ffmpeg -y -loglevel "$loglevel" -f concat -safe 0 -i "$concat_file" -c:v libx264 -crf 23 -c:a aac -stats "$output"
     local result=$?
     
     rm -f "$concat_file"
