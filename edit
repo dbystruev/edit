@@ -765,25 +765,47 @@ cmd_text() {
         tmp_images+=("$tmp_img")
 
         if [[ "$has_drawtext" == "false" ]]; then
-            # Create text image - use caption for automatic word wrapping
-            # Text can overflow the rectangle if it doesn't fit
-            local font_args=""
-            [[ "$txt_bold" == "true" ]] && font_args+=" -weight Bold"
-            [[ -n "$use_font" ]] && font_args+=" -font '${use_font}'"
-
-            # Use caption which wraps words automatically at width boundary
-            eval $magick_cmd -background none -fill "'${txt_color}'" \
-                ${font_args} -pointsize ${txt_size} \
-                -size ${txt_w}x caption:"'${txt}'" "'${tmp_img}'" 2>/dev/null
-
-            # Fallback: simple annotate without wrapping
-            if [[ ! -f "$tmp_img" ]]; then
-                eval $magick_cmd -background none -fill "'${txt_color}'" \
-                    ${font_args} -pointsize ${txt_size} \
-                    -gravity center -size ${txt_w}x${txt_h} xc:none \
-                    -annotate +0+0 "'${txt}'" "'${tmp_img}'" 2>/dev/null
-            fi
-
+            # Create text image with proper word wrapping and centering
+            # Manual word wrap at spaces, then center in canvas
+            
+            local font_name="sans"
+            [[ -n "$use_font" ]] && font_name="$use_font"
+            
+            # Word wrap: break at spaces, never cut words
+            # Calculate approximate chars per line based on font size and width
+            local char_width=$(( txt_size * 7 / 10 ))
+            [[ $char_width -lt 1 ]] && char_width=1
+            local max_chars=$(( txt_w * 10 / char_width ))
+            [[ $max_chars -lt 5 ]] && max_chars=5
+            
+            local wrapped=""
+            local line=""
+            for word in $txt; do
+                if [[ ${#line} -gt 0 && $((${#line} + ${#word} + 1)) -gt $max_chars ]]; then
+                    # Line would be too long, start new line
+                    [[ -n "$wrapped" ]] && wrapped="${wrapped}\n"
+                    wrapped="${wrapped}${line}"
+                    line="$word"
+                else
+                    [[ -n "$line" ]] && line="$line "
+                    line="${line}${word}"
+                fi
+            done
+            [[ -n "$line" ]] && { [[ -n "$wrapped" ]] && wrapped="${wrapped}\n"; wrapped="${wrapped}${line}"; }
+            
+            # Count lines to determine canvas height
+            local num_lines=1
+            [[ -n "$wrapped" ]] && num_lines=$(echo -e "$wrapped" | wc -l)
+            local canvas_h=$(( num_lines * txt_size * 13 / 10 ))
+            [[ $canvas_h -lt $txt_h ]] && canvas_h=$txt_h
+            
+            # Create canvas and draw centered text
+            eval $magick_cmd -size "${txt_w}x${canvas_h}" xc:white \
+                -font "'${font_name}'" -pointsize ${txt_size} \
+                -fill black -gravity center \
+                -annotate +0+0 "'$(echo -e "$wrapped")'" \
+                -transparent white "'${tmp_img}'" 2>/dev/null
+            
             [[ ! -f "$tmp_img" ]] && error "Failed to create text image $i" && exit 1
             local img_size=$($magick_cmd identify -format "%wx%h" "$tmp_img" 2>/dev/null || echo "?")
             info "Created text $i: '$txt' (${img_size}, size=${txt_size})"
