@@ -160,6 +160,7 @@ COMMANDS:
     resize              Resize video dimensions
     split               Split video into subclips
     join                Concatenate multiple clips
+    transcribe          Transcribe audio/video to text
 
 TIME FORMATS:
     10          seconds
@@ -399,6 +400,40 @@ EXAMPLES:
 
     # Split with custom prefix
     edit split input.mp4 --times 30,60 --prefix clip
+EOF
+}
+
+show_transcribe_help() {
+    cat << 'EOF'
+edit transcribe - Transcribe audio/video to text with timestamps
+
+REQUIRES: whisper (pip install openai-whisper)
+  Local inference, no API key needed. Auto-detects language.
+
+USAGE:
+    edit transcribe INPUT [OPTIONS]
+
+OPTIONS:
+    --model MODEL    Whisper model: tiny, base, small, medium, large
+                     (default: small)
+    --language LANG  Force language (e.g., ru, en, ja)
+                     (default: auto-detect)
+    --format FORMAT  Output format: srt, txt, json, vtt (default: srt)
+    --output FILE    Output file (default: input name with new extension)
+    -v, --verbose    Show verbose output
+
+EXAMPLES:
+    # Transcribe with auto language detection
+    edit transcribe input.mp4
+
+    # Transcribe Russian with medium model
+    edit transcribe input.mp4 --language ru --model medium
+
+    # Output as plain text
+    edit transcribe input.mp4 --format txt
+
+    # Use large model for best accuracy
+    edit transcribe input.mp4 --model large
 EOF
 }
 
@@ -1245,7 +1280,7 @@ cmd_split() {
         local output="${prefix}_${segment_num}.${ext}"
         
         info "Segment $segment_num: ${start_time}s to ${end_time}s -> $output"
-        ffmpeg -y -loglevel "$loglevel" -i "$input" -ss "$start_time" -to "$end_time" -c:v libx264 -crf 23 -c:a aac -stats "$output" && success "Created: $output" || error "Failed to create $output"
+        ffmpeg -y -loglevel "$loglevel" -i "$input" -ss "$start_time" -to "$end_time" -c:v libx264 -crf 23 -force_key_frames "expr:gte(t,$start_time)" -c:a aac -stats "$output" && success "Created: $output" || error "Failed to create $output"
     done
 }
 
@@ -1298,6 +1333,64 @@ cmd_join() {
 }
 
 # ============================================================================
+# transcribe Command
+# ============================================================================
+
+cmd_transcribe() {
+    local input="" model="small" language="" format="srt" output_file=""
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_transcribe_help && exit 0; done
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -v|--verbose) VERBOSE=true; shift;;
+            --model) model="$2"; shift 2;;
+            --language) language="$2"; shift 2;;
+            --format) format="$2"; shift 2;;
+            --output) output_file="$2"; shift 2;;
+            -*) error "Unknown option: $1"; exit 1;;
+            *) [[ -z "$input" ]] && input="$1"; shift;;
+        esac
+    done
+    
+    [[ -z "$input" ]] && error "Usage: edit transcribe INPUT [--model small] [--format srt]" && exit 1
+    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
+    
+    # Check if whisper is installed
+    if ! command -v whisper &>/dev/null; then
+        error "whisper not found. Install with: pip install openai-whisper"
+        error "For GPU support: pip install openai-whisper torch"
+        exit 1
+    fi
+    
+    # Default output file
+    [[ -z "$output_file" ]] && output_file="${input%.*}"
+    
+    local loglevel=""
+    [[ "$VERBOSE" == "true" ]] && loglevel="--verbose True"
+    
+    # Build whisper command
+    local whisper_cmd="whisper \"$input\" --model $model --output_format $format --output_dir \"$(dirname "$output_file")\" $loglevel"
+    
+    # Add language if specified
+    [[ -n "$language" ]] && whisper_cmd+=" --language $language"
+    
+    info "Transcribing with model: $model"
+    [[ -n "$language" ]] && info "Language: $language" || info "Language: auto-detect"
+    
+    eval "$whisper_cmd"
+    
+    # Rename output file if needed
+    local expected_output="${output_file}.${format}"
+    local whisper_output="$(dirname "$output_file")/$(basename "$input" .*).${format}"
+    
+    if [[ -f "$whisper_output" && "$whisper_output" != "$expected_output" ]]; then
+        mv "$whisper_output" "$expected_output"
+    fi
+    
+    [[ -f "$expected_output" ]] && success "Created: $expected_output" || error "Transcription failed"
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -1321,7 +1414,8 @@ main() {
         resize) cmd_resize "$@";;
         split) cmd_split "$@";;
         join|concat|cat) cmd_join "$@";;
-        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, fade-in, fade-out, resize, split, join"; exit 1;;
+        transcribe|whisper) cmd_transcribe "$@";;
+        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, fade-in, fade-out, resize, split, join, transcribe"; exit 1;;
     esac
 }
 
