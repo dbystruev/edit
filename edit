@@ -231,11 +231,11 @@ OPTIONS:
     --duration TIME Duration (default: 3)
     --rect X1,Y1 X2,Y2  Text placement rectangle
     --color COLOR   Text color (default: white)
-    --size SIZE     Font size in pixels (default: 768)
+    --size SIZE     Font size in pixels (default: 384)
     --font FONT     Font face name
     --bold          Bold text
-    --outline W:C   Outline (e.g., 2:black)
-    --bg-color C    Background color
+    --fade in|out   Fade video/audio in or out during text display
+                    (text stays visible, video/audio fades)
     -v, --verbose   Show verbose output
 
 SEQUENCE MODE:
@@ -560,8 +560,9 @@ cmd_text() {
     local input="" output=""
     local texts=() text_ats=() text_durations=() text_rects=()
     local text_colors=() text_sizes=() text_fonts=() text_bolds=() text_outlines=() text_bg_colors=()
+    local text_fades=()
     local at="seconds:0" duration="seconds:3" rect=""
-    local color="white" size="320" font="" bold=false outline="" bg_color=""
+    local color="white" size="384" font="" bold=false outline="" bg_color="" fade_mode=""
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_text_help && exit 0; done
 
@@ -637,6 +638,13 @@ cmd_text() {
                     bold=true
                 fi
                 shift ;;
+            --fade)
+                if [[ ${#texts[@]} -gt 0 ]]; then
+                    text_fades[$((${#texts[@]}-1))]="$2"
+                else
+                    fade_mode="$2"
+                fi
+                shift 2 ;;
             --outline)
                 if [[ ${#texts[@]} -gt 0 ]]; then
                     text_outlines[$((${#texts[@]}-1))]="$2"
@@ -682,6 +690,7 @@ cmd_text() {
                     text_bolds+=("$bold")
                     text_outlines+=("$outline")
                     text_bg_colors+=("$bg_color")
+                    text_fades+=("$fade_mode")
                 fi
                 shift ;;
         esac
@@ -807,12 +816,21 @@ cmd_text() {
             
             # Create text on black background, make black transparent, output as PNG32
             # Canvas is wider than rectangle to allow text overflow
+            # Add thick black border around text for visibility
+            local border_width=$(( txt_size / 16 ))
+            [[ $border_width -lt 2 ]] && border_width=2
+            
+            # Create text with border: draw black text first (offset), then white text on top
             eval $magick_cmd \
                 -size "${canvas_w}x${canvas_h}" xc:black \
                 ${font_flag} \
                 -pointsize ${txt_size} \
-                -fill white \
+                -fill black \
+                -stroke black -strokewidth ${border_width} \
                 -gravity center \
+                -annotate +0+0 "'$(echo -e "$wrapped")'" \
+                -fill white \
+                -stroke none \
                 -annotate +0+0 "'$(echo -e "$wrapped")'" \
                 -fuzz 10% \
                 -transparent black \
@@ -842,15 +860,66 @@ cmd_text() {
         [[ "$raw_dur" =~ ^seconds: ]] && raw_dur="${raw_dur#seconds:}"
         [[ "$raw_dur" =~ ^frame: ]] && raw_dur="f${raw_dur#frame:}"
         
-        info "Text $i: '${texts[$i]}' at=${raw_at}s"
+        info "Text $i: '${texts[$i]}' at=${raw_at}s${text_fades[$i]:+, fade=${text_fades[$i]}}"
         pic_args+=(--at "$raw_at" --duration "$raw_dur" --rect "$rect_p1" "$rect_p2" "${tmp_images[$i]}")
     done
 
+    # Check if any text has fade mode
+    local has_fade=false
+    for fade in "${text_fades[@]}"; do
+        [[ -n "$fade" ]] && has_fade=true && break
+    done
+    
+    local input_for_pic="$input"
+    
+    # Apply fade effects if any text has fade mode
+    if [[ "$has_fade" == "true" ]]; then
+        local faded_video="${tmp_dir}/faded.mp4"
+        local vfilters="[0:v]"
+        local afilters="[0:a]"
+        
+        for i in "${!texts[@]}"; do
+            local txt_fade="${text_fades[$i]}"
+            [[ -z "$txt_fade" ]] && continue
+            
+            local start_s=$(time_to_seconds "${text_ats[$i]}" "$fps")
+            local dur_s=$(time_to_seconds "${text_durations[$i]}" "$fps")
+            
+            if [[ "$txt_fade" == "out" ]]; then
+                vfilters+=",fade=t=out:st=${start_s}:d=${dur_s}"
+                afilters+=",afade=t=out:st=${start_s}:d=${dur_s}"
+            elif [[ "$txt_fade" == "in" ]]; then
+                vfilters+=",fade=t=in:st=${start_s}:d=${dur_s}"
+                afilters+=",afade=t=in:st=${start_s}:d=${dur_s}"
+            fi
+        done
+        
+        vfilters+="[vout]"
+        afilters+="[aout]"
+        
+        info "Applying fade effects to video/audio..."
+        local loglevel="warning"
+        [[ "$VERBOSE" == "true" ]] && loglevel="info"
+        
+        ffmpeg -y -loglevel "$loglevel" -i "$input" \
+            -filter_complex "${vfilters};${afilters}" \
+            -map "[vout]" -map "[aout]" \
+            -c:v libx264 -crf 23 -c:a copy \
+            "$faded_video" 2>/dev/null
+        
+        if [[ -f "$faded_video" ]]; then
+            input_for_pic="$faded_video"
+            info "Faded video created"
+        else
+            warn "Failed to create faded video, using original"
+        fi
+    fi
+
     # Execute pic command with all images
+    pic_args[0]="$input_for_pic"
     cmd_pic "${pic_args[@]}"
     local result=$?
     
-    # Cleanup
     rm -rf "$tmp_dir"
     return $result
 }
