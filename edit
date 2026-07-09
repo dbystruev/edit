@@ -158,6 +158,7 @@ COMMANDS:
     fade-in             Apply fade in effect to beginning of video
     fade-out            Apply fade out effect to end of video
     resize              Resize video dimensions
+    frame               Extract a single frame
     split               Split video into subclips
     join                Concatenate multiple clips
     transcribe          Transcribe audio/video to text
@@ -476,9 +477,39 @@ EXAMPLES:
 
     # Output as plain text
     edit transcribe input.mp4 --format txt
+EOF
+}
 
-    # Use large model for best accuracy
-    edit transcribe input.mp4 --model large
+show_frame_help() {
+    cat << 'EOF'
+edit frame - Extract a single frame from video
+
+USAGE:
+    edit frame INPUT OUTPUT [OPTIONS]
+
+OPTIONS:
+    --at TIME        Time of frame to extract (default: 0)
+    -v, --verbose    Show verbose output
+
+TIME FORMATS:
+    10          seconds
+    10.5        seconds with decimal
+    3:45        minutes:seconds
+    2:03:45     hours:minutes:seconds
+    f180        frame number
+
+EXAMPLES:
+    # Extract frame at 10 seconds
+    edit frame input.mp4 frame.png --at 10
+
+    # Extract frame at 1m30s
+    edit frame input.mp4 frame.png --at 1:30
+
+    # Extract frame 180
+    edit frame input.mp4 frame.png --at f180
+
+    # Extract first frame (default)
+    edit frame input.mp4 frame.png
 EOF
 }
 
@@ -1354,6 +1385,33 @@ cmd_resize() {
 }
 
 # ============================================================================
+# frame Command
+# ============================================================================
+
+cmd_frame() {
+    local input="" output="" at_time="0"
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_frame_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --at) at_time="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit frame INPUT OUTPUT [--at TIME]" && exit 1
+    [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
+
+    # Get video info for time conversion
+    local vid_duration vid_fps
+    vid_duration=$(get_duration "$input")
+    vid_fps=$(get_video_fps "$input")
+    
+    # Convert time value to seconds
+    local at_sec
+    at_sec=$(parse_time_value "$at_time" "$vid_fps" "$vid_duration")
+
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -ss "$at_sec" -vframes 1 -stats "$output" && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
 # split Command
 # ============================================================================
 
@@ -1467,8 +1525,17 @@ cmd_transcribe() {
     [[ -z "$input" ]] && error "Usage: edit transcribe INPUT [--model small] [--format srt]" && exit 1
     [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
     
-    # Check if whisper is installed, offer to install if not
-    if ! command -v whisper &>/dev/null; then
+    # Check if whisper is installed (as Python module or command)
+    local whisper_found=false
+    if command -v whisper &>/dev/null; then
+        whisper_found=true
+    elif python3 -c "import whisper" &>/dev/null; then
+        whisper_found=true
+    elif python -c "import whisper" &>/dev/null; then
+        whisper_found=true
+    fi
+    
+    if [[ "$whisper_found" == "false" ]]; then
         warn "whisper not found"
         if [[ "$AUTO_YES" == "true" ]] || confirm "Install openai-whisper?"; then
             info "Installing openai-whisper..."
@@ -1482,7 +1549,7 @@ cmd_transcribe() {
             fi
             
             # Verify installation
-            if ! command -v whisper &>/dev/null; then
+            if ! python3 -c "import whisper" &>/dev/null && ! python -c "import whisper" &>/dev/null; then
                 error "Installation failed. Try manually: pip install openai-whisper"
                 exit 1
             fi
@@ -1499,8 +1566,13 @@ cmd_transcribe() {
     local loglevel=""
     [[ "$VERBOSE" == "true" ]] && loglevel="--verbose True"
     
-    # Build whisper command
-    local whisper_cmd="whisper \"$input\" --model $model --output_format $format --output_dir \"$(dirname "$output_file")\" $loglevel"
+    # Build whisper command - use python3 -m whisper if whisper command not found
+    local whisper_bin="whisper"
+    if ! command -v whisper &>/dev/null; then
+        whisper_bin="python3 -m whisper"
+    fi
+    
+    local whisper_cmd="$whisper_bin \"$input\" --model $model --output_format $format --output_dir \"$(dirname "$output_file")\" $loglevel"
     
     # Add language if specified
     [[ -n "$language" ]] && whisper_cmd+=" --language $language"
@@ -1543,10 +1615,11 @@ main() {
         fade-in|fadein) cmd_fadein "$@";;
         fade-out|fadeout) cmd_fadeout "$@";;
         resize) cmd_resize "$@";;
+        frame) cmd_frame "$@";;
         split) cmd_split "$@";;
         join|concat|cat) cmd_join "$@";;
         transcribe|whisper) cmd_transcribe "$@";;
-        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, fade-in, fade-out, resize, split, join, transcribe"; exit 1;;
+        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, fade-in, fade-out, resize, frame, split, join, transcribe"; exit 1;;
     esac
 }
 
