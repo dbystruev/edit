@@ -771,30 +771,24 @@ cmd_text() {
             local font_name="sans"
             [[ -n "$use_font" ]] && font_name="$use_font"
             
-            # Word wrap: measure actual text width, break at spaces
-            # Use iterative approach: try adding words, measure width, wrap if too wide
+            # Word wrap: conservative estimate, break at spaces
+            # Each CJK char is ~1.0 * font_size, Latin ~0.5 * font_size
+            # Use safe estimate: each char ~0.8 * font_size pixels wide
+            local char_width=$(( txt_size * 8 / 10 ))
+            [[ $char_width -lt 1 ]] && char_width=1
+            local max_chars=$(( txt_w * 9 / 10 / char_width ))
+            [[ $max_chars -lt 3 ]] && max_chars=3
+            
             local wrapped=""
             local line=""
-            local font_flag=""
-            [[ -n "$use_font" ]] && font_flag="-font '${use_font}'"
-            
             for word in $txt; do
-                local test_line="${line}${line:+ }${word}"
-                # Measure width of this line
-                local test_img="/tmp/measure_$$.png"
-                eval $magick_cmd -size 1x1 xc:none ${font_flag} \
-                    -pointsize ${txt_size} -fill white \
-                    -annotate +0+0 "'${test_line}'" PNG32:"${test_img}" 2>/dev/null
-                local bbox=$($magick_cmd identify -format "%w" "${test_img}" 2>/dev/null || echo "0")
-                rm -f "${test_img}"
-                
-                if [[ -n "$bbox" && "$bbox" -gt "$txt_w" && -n "$line" ]]; then
-                    # Line too wide, wrap
+                if [[ ${#line} -gt 0 && $((${#line} + ${#word} + 1)) -gt $max_chars ]]; then
                     [[ -n "$wrapped" ]] && wrapped="${wrapped}\n"
                     wrapped="${wrapped}${line}"
                     line="$word"
                 else
-                    line="${line}${line:+ }${word}"
+                    [[ -n "$line" ]] && line="$line "
+                    line="${line}${word}"
                 fi
             done
             [[ -n "$line" ]] && { [[ -n "$wrapped" ]] && wrapped="${wrapped}\n"; wrapped="${wrapped}${line}"; }
@@ -803,7 +797,6 @@ cmd_text() {
             local num_lines=1
             [[ -n "$wrapped" ]] && num_lines=$(echo -e "$wrapped" | wc -l)
             local canvas_h=$(( num_lines * txt_size * 14 / 10 ))
-            # Don't force canvas to rectangle height - let text overflow if needed
             
             # Create text image with proper alpha channel
             local font_flag=""
