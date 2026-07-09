@@ -561,7 +561,7 @@ cmd_text() {
     local texts=() text_ats=() text_durations=() text_rects=()
     local text_colors=() text_sizes=() text_fonts=() text_bolds=() text_outlines=() text_bg_colors=()
     local at="seconds:0" duration="seconds:3" rect=""
-    local color="white" size="256" font="" bold=false outline="" bg_color=""
+    local color="white" size="320" font="" bold=false outline="" bg_color=""
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_text_help && exit 0; done
 
