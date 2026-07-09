@@ -491,34 +491,20 @@ cmd_pic() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose) VERBOSE=true; shift ;;
-            --at)
-                at=$(parse_time "$2") || exit 1
-                if [[ ${#pictures[@]} -gt 0 ]]; then
-                    local last=$((${#pictures[@]} - 1))
-                    pic_ats[$last]="$at"
-                fi
-                shift 2 ;;
-            --duration)
-                duration=$(parse_time "$2") || exit 1
-                if [[ ${#pictures[@]} -gt 0 ]]; then
-                    local last=$((${#pictures[@]} - 1))
-                    pic_durations[$last]="$duration"
-                fi
-                shift 2 ;;
-            --rect)
-                rect="$2 $3"
-                if [[ ${#pictures[@]} -gt 0 ]]; then
-                    local last=$((${#pictures[@]} - 1))
-                    pic_rects[$last]="$rect"
-                fi
-                shift 3 ;;
+            --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
+            --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
+            --rect) rect="$2 $3"; shift 3 ;;
             --mode) global_mode="$2"; shift 2 ;;
             --opacity) global_opacity=$(parse_opacity "$2") || exit 1; shift 2 ;;
             --file) param_file="$2"; shift 2 ;;
             -*) error "Unknown: $1"; exit 1 ;;
             *)
                 if [[ "$1" =~ \.(jpg|jpeg|png|gif|bmp|tiff|webp)$ ]]; then
-                    pictures+=("$1"); pic_ats+=("$at"); pic_durations+=("$duration"); pic_rects+=("$rect")
+                    # Add picture with current defaults
+                    pictures+=("$1")
+                    pic_ats+=("$at")
+                    pic_durations+=("$duration")
+                    pic_rects+=("$rect")
                 elif [[ -z "$input" ]]; then input="$1"
                 elif [[ -z "$output" ]]; then output="$1"
                 else error "Unexpected: $1"; exit 1; fi
@@ -594,71 +580,75 @@ cmd_text() {
     fi
 
     # Parse arguments - support multiple texts like pic supports multiple images
+    # Pattern: text1 --at 48 --rect ... text2 --at 28 ...
+    # --at/--rect etc. update the PRECEDING text, not the following one
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose) VERBOSE=true; shift ;;
             --at)
-                at=$(parse_time "$2") || exit 1
-                # If texts exist, update last text's --at
+                local new_at=$(parse_time "$2") || exit 1
                 if [[ ${#texts[@]} -gt 0 ]]; then
-                    local last=$((${#texts[@]} - 1))
-                    text_ats[$last]="$at"
+                    text_ats[$((${#texts[@]}-1))]="$new_at"
+                else
+                    at="$new_at"
                 fi
                 shift 2 ;;
             --duration)
-                duration=$(parse_time "$2") || exit 1
+                local new_dur=$(parse_time "$2") || exit 1
                 if [[ ${#texts[@]} -gt 0 ]]; then
-                    local last=$((${#texts[@]} - 1))
-                    text_durations[$last]="$duration"
+                    text_durations[$((${#texts[@]}-1))]="$new_dur"
+                else
+                    duration="$new_dur"
                 fi
                 shift 2 ;;
             --rect)
-                rect="$2 $3"
+                local new_rect="$2 $3"
                 if [[ ${#texts[@]} -gt 0 ]]; then
-                    local last=$((${#texts[@]} - 1))
-                    text_rects[$last]="$rect"
+                    text_rects[$((${#texts[@]}-1))]="$new_rect"
+                else
+                    rect="$new_rect"
                 fi
                 shift 3 ;;
             --color)
-                color="$2"
                 if [[ ${#texts[@]} -gt 0 ]]; then
-                    local last=$((${#texts[@]} - 1))
-                    text_colors[$last]="$color"
+                    text_colors[$((${#texts[@]}-1))]="$2"
+                else
+                    color="$2"
                 fi
                 shift 2 ;;
             --size)
-                size="$2"
                 if [[ ${#texts[@]} -gt 0 ]]; then
-                    local last=$((${#texts[@]} - 1))
-                    text_sizes[$last]="$size"
+                    text_sizes[$((${#texts[@]}-1))]="$2"
+                else
+                    size="$2"
                 fi
                 shift 2 ;;
             --font)
-                font="$2"
                 if [[ ${#texts[@]} -gt 0 ]]; then
-                    local last=$((${#texts[@]} - 1))
-                    text_fonts[$last]="$font"
+                    text_fonts[$((${#texts[@]}-1))]="$2"
+                else
+                    font="$2"
                 fi
                 shift 2 ;;
             --bold)
-                bold=true
                 if [[ ${#texts[@]} -gt 0 ]]; then
-                    local last=$((${#texts[@]} - 1))
-                    text_bolds[$last]="$bold"
+                    text_bolds[$((${#texts[@]}-1))]="true"
+                else
+                    bold=true
                 fi
                 shift ;;
             --outline)
-                outline="$2"
                 if [[ ${#texts[@]} -gt 0 ]]; then
-                    local last=$((${#texts[@]} - 1))
-                    text_outlines[$last]="$outline"
+                    text_outlines[$((${#texts[@]}-1))]="$2"
+                else
+                    outline="$2"
                 fi
                 shift 2 ;;
             --bg-color)
-                bg_color="$2"
                 if [[ ${#texts[@]} -gt 0 ]]; then
-                    local last=$((${#texts[@]} - 1))
-                    text_bg_colors[$last]="$bg_color"
+                    text_bg_colors[$((${#texts[@]}-1))]="$2"
+                else
+                    bg_color="$2"
                 fi
                 shift 2 ;;
             -*) error "Unknown: $1"; exit 1 ;;
@@ -668,6 +658,20 @@ cmd_text() {
                 elif [[ -z "$output" ]]; then
                     output="$1"
                 else
+                    # Inherit from previous text if exists
+                    local prev=$((${#texts[@]}-1))
+                    if [[ $prev -ge 0 ]]; then
+                        # Use previous text's values as defaults for new text
+                        at="${text_ats[$prev]}"
+                        duration="${text_durations[$prev]}"
+                        rect="${text_rects[$prev]}"
+                        color="${text_colors[$prev]}"
+                        size="${text_sizes[$prev]}"
+                        font="${text_fonts[$prev]}"
+                        bold="${text_bolds[$prev]}"
+                        outline="${text_outlines[$prev]}"
+                        bg_color="${text_bg_colors[$prev]}"
+                    fi
                     texts+=("$1")
                     text_ats+=("$at")
                     text_durations+=("$duration")
@@ -689,37 +693,38 @@ cmd_text() {
     for i in "${!texts[@]}"; do [[ -z "${text_rects[$i]}" ]] && error "Missing --rect for '${texts[$i]}'" && exit 1; done
     [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
 
-    # Sort texts by --at time (bubble sort)
+    # Sort texts by --at time (selection sort)
     local n=${#texts[@]}
+    info "Before sort: $(for i in "${!texts[@]}"; do echo -n "${texts[$i]}=${text_ats[$i]} "; done)"
+    
     for ((i=0; i<n-1; i++)); do
-        for ((j=0; j<n-i-1; j++)); do
-            local si=$(time_to_seconds "${text_ats[$j]}" 2>/dev/null || echo "0")
-            local sj=$(time_to_seconds "${text_ats[$((j+1))]}" 2>/dev/null || echo "0")
-            local should_swap=$(echo "$sj < $si" | bc -l 2>/dev/null || echo "0")
-            if [[ "$should_swap" == "1" ]]; then
-                # Store all values from position j first
-                local t0="${texts[$j]}" a0="${text_ats[$j]}" d0="${text_durations[$j]}"
-                local r0="${text_rects[$j]}" c0="${text_colors[$j]}" s0="${text_sizes[$j]}"
-                local f0="${text_fonts[$j]}" b0="${text_bolds[$j]}" o0="${text_outlines[$j]}"
-                local bg0="${text_bg_colors[$j]}"
-                # Get values from position j+1
-                local t1="${texts[$((j+1))]}" a1="${text_ats[$((j+1))]}"
-                local d1="${text_durations[$((j+1))]}" r1="${text_rects[$((j+1))]}"
-                local c1="${text_colors[$((j+1))]}" s1="${text_sizes[$((j+1))]}"
-                local f1="${text_fonts[$((j+1))]}" b1="${text_bolds[$((j+1))]}"
-                local o1="${text_outlines[$((j+1))]}" bg1="${text_bg_colors[$((j+1))]}"
-                # Now assign swapped values
-                texts[$j]="$t1"; text_ats[$j]="$a1"; text_durations[$j]="$d1"
-                text_rects[$j]="$r1"; text_colors[$j]="$c1"; text_sizes[$j]="$s1"
-                text_fonts[$j]="$f1"; text_bolds[$j]="$b1"; text_outlines[$j]="$o1"
-                text_bg_colors[$j]="$bg1"
-                texts[$((j+1))]="$t0"; text_ats[$((j+1))]="$a0"; text_durations[$((j+1))]="$d0"
-                text_rects[$((j+1))]="$r0"; text_colors[$((j+1))]="$c0"; text_sizes[$((j+1))]="$s0"
-                text_fonts[$((j+1))]="$f0"; text_bolds[$((j+1))]="$b0"; text_outlines[$((j+1))]="$o0"
-                text_bg_colors[$((j+1))]="$bg0"
+        local min_idx=$i
+        local min_val="${text_ats[$i]#seconds:}"
+        min_val="${min_val#frame:}"
+        for ((j=i+1; j<n; j++)); do
+            local cur_val="${text_ats[$j]#seconds:}"
+            cur_val="${cur_val#frame:}"
+            if [[ "$cur_val" -lt "$min_val" ]] 2>/dev/null; then
+                min_idx=$j
+                min_val="$cur_val"
             fi
         done
+        if [[ $min_idx -ne $i ]]; then
+            local tmp="${texts[$i]}"; texts[$i]="${texts[$min_idx]}"; texts[$min_idx]="$tmp"
+            tmp="${text_ats[$i]}"; text_ats[$i]="${text_ats[$min_idx]}"; text_ats[$min_idx]="$tmp"
+            tmp="${text_durations[$i]}"; text_durations[$i]="${text_durations[$min_idx]}"; text_durations[$min_idx]="$tmp"
+            tmp="${text_rects[$i]}"; text_rects[$i]="${text_rects[$min_idx]}"; text_rects[$min_idx]="$tmp"
+            tmp="${text_colors[$i]}"; text_colors[$i]="${text_colors[$min_idx]}"; text_colors[$min_idx]="$tmp"
+            tmp="${text_sizes[$i]}"; text_sizes[$i]="${text_sizes[$min_idx]}"; text_sizes[$min_idx]="$tmp"
+            tmp="${text_fonts[$i]}"; text_fonts[$i]="${text_fonts[$min_idx]}"; text_fonts[$min_idx]="$tmp"
+            tmp="${text_bolds[$i]}"; text_bolds[$i]="${text_bolds[$min_idx]}"; text_bolds[$min_idx]="$tmp"
+            tmp="${text_outlines[$i]}"; text_outlines[$i]="${text_outlines[$min_idx]}"; text_outlines[$min_idx]="$tmp"
+            tmp="${text_bg_colors[$i]}"; text_bg_colors[$i]="${text_bg_colors[$min_idx]}"; text_bg_colors[$min_idx]="$tmp"
+            info "Swapped $i <-> $min_idx"
+        fi
     done
+    
+    info "After sort: $(for i in "${!texts[@]}"; do echo -n "${texts[$i]}=${text_ats[$i]} "; done)"
 
     local width height fps
     width=$(get_video_width "$input") || exit 1
@@ -804,6 +809,7 @@ cmd_text() {
     done
 
     # Build cmd_pic arguments - pass all images with their parameters
+    # Each image needs its own --at to override inherited values
     local pic_args=("$input" "$output")
     for i in "${!texts[@]}"; do
         local txt_at="${text_ats[$i]}"
@@ -812,7 +818,7 @@ cmd_text() {
         local rect_p1 rect_p2
         read -r rect_p1 rect_p2 <<< "$txt_rect"
         
-        # Extract raw time values (remove seconds: prefix)
+        # Extract raw time values
         local raw_at="$txt_at"
         [[ "$raw_at" =~ ^seconds: ]] && raw_at="${raw_at#seconds:}"
         [[ "$raw_at" =~ ^frame: ]] && raw_at="f${raw_at#frame:}"
@@ -820,6 +826,7 @@ cmd_text() {
         [[ "$raw_dur" =~ ^seconds: ]] && raw_dur="${raw_dur#seconds:}"
         [[ "$raw_dur" =~ ^frame: ]] && raw_dur="f${raw_dur#frame:}"
         
+        info "Text $i: '${texts[$i]}' at=${raw_at}s"
         pic_args+=(--at "$raw_at" --duration "$raw_dur" --rect "$rect_p1" "$rect_p2" "${tmp_images[$i]}")
     done
 
