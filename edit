@@ -875,8 +875,7 @@ cmd_text() {
     # Apply fade effects if any text has fade mode
     if [[ "$has_fade" == "true" ]]; then
         local faded_video="${tmp_dir}/faded.mp4"
-        local vfilters="[0:v]"
-        local afilters="[0:a]"
+        local fade_filters=""
         
         for i in "${!texts[@]}"; do
             local txt_fade="${text_fades[$i]}"
@@ -884,34 +883,35 @@ cmd_text() {
             
             local start_s=$(time_to_seconds "${text_ats[$i]}" "$fps")
             local dur_s=$(time_to_seconds "${text_durations[$i]}" "$fps")
+            local end_s=$(echo "$start_s $dur_s" | awk '{printf "%.6f", $1+$2}')
             
             if [[ "$txt_fade" == "out" ]]; then
-                vfilters+=",fade=t=out:st=${start_s}:d=${dur_s}"
-                afilters+=",afade=t=out:st=${start_s}:d=${dur_s}"
+                # Fade out at start, fade in at end
+                fade_filters+=",fade=t=out:st=${start_s}:d=${dur_s}"
+                fade_filters+=",fade=t=in:st=${end_s}:d=${dur_s}"
             elif [[ "$txt_fade" == "in" ]]; then
-                vfilters+=",fade=t=in:st=${start_s}:d=${dur_s}"
-                afilters+=",afade=t=in:st=${start_s}:d=${dur_s}"
+                # Fade in at start
+                fade_filters+=",fade=t=in:st=${start_s}:d=${dur_s}"
             fi
         done
         
-        vfilters+="[vout]"
-        afilters+="[aout]"
-        
-        info "Applying fade effects to video/audio..."
-        local loglevel="warning"
-        [[ "$VERBOSE" == "true" ]] && loglevel="info"
-        
-        ffmpeg -y -loglevel "$loglevel" -i "$input" \
-            -filter_complex "${vfilters};${afilters}" \
-            -map "[vout]" -map "[aout]" \
-            -c:v libx264 -crf 23 -c:a copy \
-            "$faded_video" 2>/dev/null
-        
-        if [[ -f "$faded_video" ]]; then
-            input_for_pic="$faded_video"
-            info "Faded video created"
-        else
-            warn "Failed to create faded video, using original"
+        if [[ -n "$fade_filters" ]]; then
+            info "Applying fade effects to video..."
+            local loglevel="warning"
+            [[ "$VERBOSE" == "true" ]] && loglevel="info"
+            
+            # Apply fade to video only (simpler, more reliable)
+            ffmpeg -y -loglevel "$loglevel" -i "$input" \
+                -vf "${fade_filters#,}" \
+                -c:v libx264 -crf 23 -c:a copy \
+                "$faded_video" 2>/dev/null
+            
+            if [[ -f "$faded_video" ]]; then
+                input_for_pic="$faded_video"
+                info "Faded video created"
+            else
+                warn "Failed to create faded video, using original"
+            fi
         fi
     fi
 
