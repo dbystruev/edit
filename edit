@@ -155,6 +155,8 @@ COMMANDS:
     cut                 Remove a portion of video by time
     insert              Insert another video at a timestamp
     audio               Replace or mix audio at a timestamp
+    fade-in             Apply fade in effect to beginning of video
+    fade-out            Apply fade out effect to end of video
     resize              Resize video dimensions
 
 TIME FORMATS:
@@ -262,6 +264,40 @@ OPTIONS:
 
 EXAMPLES:
     edit stat video.mp4 *.jpeg
+EOF
+}
+
+show_fadein_help() {
+    cat << 'EOF'
+edit fade-in - Apply fade in effect to beginning of video
+
+USAGE:
+    edit fade-in INPUT OUTPUT [OPTIONS]
+
+OPTIONS:
+    --duration TIME Duration of fade effect (default: 3)
+    -v, --verbose   Show verbose output
+
+EXAMPLES:
+    # Fade in from black over 5 seconds
+    edit fade-in input.mp4 output.mp4 --duration 5
+EOF
+}
+
+show_fadeout_help() {
+    cat << 'EOF'
+edit fade-out - Apply fade out effect to end of video
+
+USAGE:
+    edit fade-out INPUT OUTPUT [OPTIONS]
+
+OPTIONS:
+    --duration TIME Duration of fade effect (default: 3)
+    -v, --verbose   Show verbose output
+
+EXAMPLES:
+    # Fade out to black over 5 seconds
+    edit fade-out input.mp4 output.mp4 --duration 5
 EOF
 }
 
@@ -1054,6 +1090,46 @@ cmd_audio() {
 }
 
 # ============================================================================
+# fade-in Command
+# ============================================================================
+
+cmd_fadein() {
+    local input="" output="" duration="3"
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_fadein_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --duration) duration="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit fade-in INPUT OUTPUT [--duration 3]" && exit 1
+    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
+
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "fade=t=in:st=0:d=${duration}" -c:v libx264 -crf 23 -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
+# fade-out Command
+# ============================================================================
+
+cmd_fadeout() {
+    local input="" output="" duration="3"
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_fadeout_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --duration) duration="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit fade-out INPUT OUTPUT [--duration 3]" && exit 1
+    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
+
+    # Get video duration to calculate fade start time
+    local vid_duration
+    vid_duration=$(get_duration "$input")
+    local fade_start
+    fade_start=$(echo "$vid_duration $duration" | awk '{printf "%.6f", $1-$2}')
+
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "fade=t=out:st=${fade_start}:d=${duration}" -c:v libx264 -crf 23 -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
 # resize Command
 # ============================================================================
 
@@ -1103,8 +1179,10 @@ main() {
         cut) cmd_cut "$@";;
         insert) cmd_insert "$@";;
         audio) cmd_audio "$@";;
+        fade-in|fadein) cmd_fadein "$@";;
+        fade-out|fadeout) cmd_fadeout "$@";;
         resize) cmd_resize "$@";;
-        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, resize"; exit 1;;
+        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, fade-in, fade-out, resize"; exit 1;;
     esac
 }
 
