@@ -1435,11 +1435,30 @@ cmd_transcribe() {
     [[ -z "$input" ]] && error "Usage: edit transcribe INPUT [--model small] [--format srt]" && exit 1
     [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
     
-    # Check if whisper is installed
+    # Check if whisper is installed, offer to install if not
     if ! command -v whisper &>/dev/null; then
-        error "whisper not found. Install with: pip install openai-whisper"
-        error "For GPU support: pip install openai-whisper torch"
-        exit 1
+        warn "whisper not found"
+        if [[ "$AUTO_YES" == "true" ]] || confirm "Install openai-whisper?"; then
+            info "Installing openai-whisper..."
+            if command -v pip3 &>/dev/null; then
+                pip3 install openai-whisper
+            elif command -v pip &>/dev/null; then
+                pip install openai-whisper
+            else
+                error "pip not found. Install Python first: brew install python"
+                exit 1
+            fi
+            
+            # Verify installation
+            if ! command -v whisper &>/dev/null; then
+                error "Installation failed. Try manually: pip install openai-whisper"
+                exit 1
+            fi
+            success "whisper installed successfully"
+        else
+            error "Cannot continue without whisper"
+            exit 1
+        fi
     fi
     
     # Default output file
