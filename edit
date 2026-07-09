@@ -1085,7 +1085,7 @@ cmd_text() {
         ffmpeg -y
         -loglevel "$loglevel"
         -i "$input"
-        -vf "$filters"
+        -filter_complex "$filters"
         -map "[out]"
         -map "0:a?"
         -c:a copy
