@@ -765,46 +765,28 @@ cmd_text() {
         tmp_images+=("$tmp_img")
 
         if [[ "$has_drawtext" == "false" ]]; then
-            local -a magick_args=("-size" "${txt_w}x${txt_h}" "xc:none" "-fill" "${txt_color}" "-gravity" "center")
-            [[ "$txt_bold" == "true" ]] && magick_args+=("-weight" "Bold")
-            [[ -n "$use_font" ]] && magick_args+=("-font" "$use_font")
+            # Create text image - use caption for automatic word wrapping
+            # Text can overflow the rectangle if it doesn't fit
+            local font_args=""
+            [[ "$txt_bold" == "true" ]] && font_args+=" -weight Bold"
+            [[ -n "$use_font" ]] && font_args+=" -font '${use_font}'"
 
-            # Simple word wrap - break lines that would be too long
-            # Estimate ~0.6 * font_size pixels per character, use 70% of width for safety
-            local char_width=$(( txt_size * 6 / 10 ))
-            [[ $char_width -lt 1 ]] && char_width=1
-            local max_chars=$(( txt_w * 7 / 10 / char_width ))
-            [[ $max_chars -lt 10 ]] && max_chars=10
+            # Use caption which wraps words automatically at width boundary
+            eval $magick_cmd -background none -fill "'${txt_color}'" \
+                ${font_args} -pointsize ${txt_size} \
+                -size ${txt_w}x caption:"'${txt}'" "'${tmp_img}'" 2>/dev/null
 
-            local wrapped=""
-            local line=""
-            for word in $txt; do
-                if [[ ${#line} -gt 0 && $((${#line} + ${#word} + 1)) -gt $max_chars ]]; then
-                    wrapped="${wrapped}${line}\n"
-                    line="$word"
-                else
-                    [[ -n "$line" ]] && line="$line "
-                    line="${line}${word}"
-                fi
-            done
-            [[ -n "$line" ]] && wrapped="${wrapped}${line}"
+            # Fallback: simple annotate without wrapping
+            if [[ ! -f "$tmp_img" ]]; then
+                eval $magick_cmd -background none -fill "'${txt_color}'" \
+                    ${font_args} -pointsize ${txt_size} \
+                    -gravity center -size ${txt_w}x${txt_h} xc:none \
+                    -annotate +0+0 "'${txt}'" "'${tmp_img}'" 2>/dev/null
+            fi
 
-            # Auto-scale font to fit
-            local test_size=$txt_size
-            local tmp_test="${tmp_dir}/test_${i}.png"
-            while [[ $test_size -gt 32 ]]; do
-                $magick_cmd "${magick_args[@]}" -pointsize "$test_size" -annotate +0+0 "$(echo -e "$wrapped")" "$tmp_test" 2>/dev/null
-                local bbox=$($magick_cmd identify -format "%wx%h" "$tmp_test" 2>/dev/null || echo "0x0")
-                local tw=$(echo "$bbox" | cut -dx -f1)
-                local th=$(echo "$bbox" | cut -dx -f2)
-                [[ -n "$tw" && -n "$th" && "$tw" -le "$txt_w" && "$th" -le "$txt_h" ]] && break
-                test_size=$(( test_size - 32 ))
-            done
-            rm -f "$tmp_test"
-
-            $magick_cmd "${magick_args[@]}" -pointsize "$test_size" -annotate +0+0 "$(echo -e "$wrapped")" "$tmp_img" 2>/dev/null
             [[ ! -f "$tmp_img" ]] && error "Failed to create text image $i" && exit 1
-            info "Created text image $i: '$txt' (${txt_w}x${txt_h}, size=${test_size})"
+            local img_size=$($magick_cmd identify -format "%wx%h" "$tmp_img" 2>/dev/null || echo "?")
+            info "Created text $i: '$txt' (${img_size}, size=${txt_size})"
         fi
     done
 
