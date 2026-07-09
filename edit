@@ -231,12 +231,21 @@ OPTIONS:
     --duration TIME Duration (default: 3)
     --rect X1,Y1 X2,Y2  Text placement rectangle
     --color COLOR   Text color (default: white)
-    --size SIZE     Font size in pixels (default: 48)
+    --size SIZE     Font size in pixels (default: 768)
     --font FONT     Font face name
     --bold          Bold text
     --outline W:C   Outline (e.g., 2:black)
     --bg-color C    Background color
     -v, --verbose   Show verbose output
+
+SEQUENCE MODE:
+    Each text inherits parameters from the previous one.
+    Texts can appear in any order (--at can be non-sequential).
+
+    edit text input.mp4 output.mp4 \
+        "First text" --at 10 --rect 10%,10% 90%,90% \
+        "Second text" --at 48 \
+        "Third text" --at 5
 EOF
 }
 
@@ -544,42 +553,34 @@ cmd_pic() {
 # ============================================================================
 
 cmd_text() {
-    local input="" output="" text="" at="seconds:0" duration="seconds:3"
-    local rect="" color="white" size="768" font="" bold=false outline="" bg_color=""
-    local raw_at="0" raw_duration="3"  # Store raw values for passing to cmd_pic
+    local input="" output=""
+    local texts=() text_ats=() text_durations=() text_rects=()
+    local text_colors=() text_sizes=() text_fonts=() text_bolds=() text_outlines=() text_bg_colors=()
+    local at="seconds:0" duration="seconds:3" rect=""
+    local color="white" size="768" font="" bold=false outline="" bg_color=""
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_text_help && exit 0; done
 
     local has_drawtext=false has_magick=false magick_cmd=""
     ffmpeg -filters 2>/dev/null | grep -q drawtext && has_drawtext=true
     
-    # Check for ImageMagick in common locations
     for cmd in convert magick; do
-        if command -v "$cmd" &>/dev/null; then
-            has_magick=true
-            magick_cmd="$cmd"
-            break
-        fi
-        # Check Homebrew paths
+        if command -v "$cmd" &>/dev/null; then has_magick=true; magick_cmd="$cmd"; break; fi
         for path in /opt/homebrew/bin /usr/local/bin; do
-            if [[ -x "$path/$cmd" ]]; then
-                has_magick=true
-                magick_cmd="$path/$cmd"
-                break 2
-            fi
+            if [[ -x "$path/$cmd" ]]; then has_magick=true; magick_cmd="$path/$cmd"; break 2; fi
         done
     done
 
     if [[ "$has_drawtext" == "false" && "$has_magick" == "false" ]]; then
-        error "Need ffmpeg drawtext or ImageMagick. Install: brew install imagemagick"
-        exit 1
+        error "Need ffmpeg drawtext or ImageMagick. Install: brew install imagemagick"; exit 1
     fi
 
+    # Parse arguments - support multiple texts like pic supports multiple images
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose) VERBOSE=true; shift ;;
-            --at) raw_at="$2"; at=$(parse_time "$2") || exit 1; shift 2 ;;
-            --duration) raw_duration="$2"; duration=$(parse_time "$2") || exit 1; shift 2 ;;
+            --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
+            --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
             --rect) rect="$2 $3"; shift 3 ;;
             --color) color="$2"; shift 2 ;;
             --size) size="$2"; shift 2 ;;
@@ -589,18 +590,33 @@ cmd_text() {
             --bg-color) bg_color="$2"; shift 2 ;;
             -*) error "Unknown: $1"; exit 1 ;;
             *)
-                if [[ -z "$input" ]]; then input="$1"
-                elif [[ -z "$output" ]]; then output="$1"
-                elif [[ -z "$text" ]]; then text="$1"
-                else error "Unexpected: $1"; exit 1; fi
+                # Check if this looks like input/output (no spaces, not starting with special chars)
+                # Text can have spaces and special chars, so we detect input/output first
+                if [[ -z "$input" ]]; then
+                    input="$1"
+                elif [[ -z "$output" ]]; then
+                    output="$1"
+                else
+                    # This is a text string - add it with current parameters
+                    texts+=("$1")
+                    text_ats+=("$at")
+                    text_durations+=("$duration")
+                    text_rects+=("$rect")
+                    text_colors+=("$color")
+                    text_sizes+=("$size")
+                    text_fonts+=("$font")
+                    text_bolds+=("$bold")
+                    text_outlines+=("$outline")
+                    text_bg_colors+=("$bg_color")
+                fi
                 shift ;;
         esac
     done
 
     [[ -z "$input" ]] && error "Missing INPUT" && exit 1
     [[ -z "$output" ]] && error "Missing OUTPUT" && exit 1
-    [[ -z "$text" ]] && error "Missing TEXT" && exit 1
-    [[ -z "$rect" ]] && error "Missing --rect" && exit 1
+    [[ ${#texts[@]} -eq 0 ]] && error "Missing TEXT" && exit 1
+    for i in "${!texts[@]}"; do [[ -z "${text_rects[$i]}" ]] && error "Missing --rect for '${texts[$i]}'" && exit 1; done
     [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
 
     local width height fps
@@ -608,125 +624,105 @@ cmd_text() {
     height=$(get_video_height "$input") || exit 1
     fps=$(get_video_fps "$input")
 
-    local coords x1 y1 _ _ rect_w rect_h
-    coords=$(parse_rect "$rect" "$width" "$height") || exit 1
-    read -r x1 y1 _ _ rect_w rect_h <<< "$coords"
+    # Create temp images for each text
+    local tmp_images=()
+    local tmp_dir="/tmp/edit_text_$$"
+    mkdir -p "$tmp_dir"
 
-    # ImageMagick fallback
-    if [[ "$has_drawtext" == "false" ]]; then
-        info "Using ImageMagick fallback..."
-        local tmp_img="/tmp/edit_text_$$.png"
-
-        # Find a usable font
-        local use_font=""
-        if [[ -n "$font" ]]; then
-            use_font="$font"
-        else
-            # Try common macOS/Linux fonts
-            for f in \
-                "/Library/Fonts/Arial Unicode.ttf" \
-                "/System/Library/Fonts/Supplemental/Arial.ttf" \
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" \
-                "/usr/share/fonts/TTF/DejaVuSans.ttf" \
-                "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf"; do
-                if [[ -f "$f" ]]; then
-                    use_font="$f"
-                    break
-                fi
-            done
-        fi
-
-        local -a magick_args=("-size" "${rect_w}x${rect_h}" "xc:none" "-fill" "${color}" "-gravity" "center")
-        [[ "$bold" == "true" ]] && magick_args+=("-weight" "Bold")
-        [[ -n "$use_font" ]] && magick_args+=("-font" "$use_font")
-
-        # Use -annotate with word wrapping by adding newlines every ~60 chars
-        # Also auto-scale font to fit if text is too long
-        local wrapped_text="$text"
-        # Simple word wrap at ~60 characters
-        if [[ ${#text} -gt 60 ]]; then
-            wrapped_text=""
-            local line=""
-            for word in $text; do
-                if [[ ${#line} -gt 0 ]]; then
-                    line="$line "
-                fi
-                if [[ $((${#line} + ${#word})) -gt 60 ]]; then
-                    wrapped_text="${wrapped_text}${line}\n"
-                    line="$word"
-                else
-                    line="${line}${word}"
-                fi
-            done
-            [[ -n "$line" ]] && wrapped_text="${wrapped_text}${line}"
-        fi
-
-        # Auto-scale if text won't fit - reduce font size iteratively
-        local test_size=$size
-        local tmp_test="/tmp/edit_text_test_$$.png"
-        while [[ $test_size -gt 32 ]]; do
-            $magick_cmd "${magick_args[@]}" -pointsize "$test_size" \
-                -annotate +0+0 "$(echo -e "$wrapped_text")" "$tmp_test" 2>/dev/null
-            # Check if text fits by comparing bounding box
-            local bbox
-            bbox=$($magick_cmd identify -format "%wx%h" "$tmp_test" 2>/dev/null || echo "0x0")
-            local test_w test_h
-            test_w=$(echo "$bbox" | cut -dx -f1)
-            test_h=$(echo "$bbox" | cut -dx -f2)
-            if [[ -n "$test_w" && -n "$test_h" && "$test_w" -le "$rect_w" && "$test_h" -le "$rect_h" ]]; then
-                break
-            fi
-            test_size=$(( test_size - 32 ))
+    # Find usable font
+    local use_font=""
+    if [[ -n "$font" ]]; then
+        use_font="$font"
+    else
+        for f in "/Library/Fonts/Arial Unicode.ttf" "/System/Library/Fonts/Supplemental/Arial.ttf" \
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" "/usr/share/fonts/TTF/DejaVuSans.ttf"; do
+            [[ -f "$f" ]] && use_font="$f" && break
         done
-        rm -f "$tmp_test"
+    fi
 
-        # Create final image
-        $magick_cmd "${magick_args[@]}" -pointsize "$test_size" \
-            -annotate +0+0 "$(echo -e "$wrapped_text")" "$tmp_img" 2>/dev/null
-        
-        if [[ ! -f "$tmp_img" ]]; then
-            error "Failed to create text image with ImageMagick"
-            error "Try installing fonts: brew install font-dejavu-sans"
-            exit 1
+    for i in "${!texts[@]}"; do
+        local txt="${texts[$i]}"
+        local txt_color="${text_colors[$i]}"
+        local txt_size="${text_sizes[$i]}"
+        local txt_rect="${text_rects[$i]}"
+        local txt_bold="${text_bolds[$i]}"
+        local txt_font="${text_fonts[$i]}"
+        [[ -n "$txt_font" ]] && use_font="$txt_font"
+
+        local coords txt_w txt_h
+        coords=$(parse_rect "$txt_rect" "$width" "$height") || exit 1
+        local _ _ _ _ 
+        read -r _ _ _ _ txt_w txt_h <<< "$coords"
+
+        local tmp_img="${tmp_dir}/text_${i}.png"
+        tmp_images+=("$tmp_img")
+
+        if [[ "$has_drawtext" == "false" ]]; then
+            local -a magick_args=("-size" "${txt_w}x${txt_h}" "xc:none" "-fill" "${txt_color}" "-gravity" "center")
+            [[ "$txt_bold" == "true" ]] && magick_args+=("-weight" "Bold")
+            [[ -n "$use_font" ]] && magick_args+=("-font" "$use_font")
+
+            # Word wrap
+            local wrapped="$txt"
+            if [[ ${#txt} -gt 60 ]]; then
+                wrapped=""; local line=""
+                for word in $txt; do
+                    [[ ${#line} -gt 0 ]] && line="$line "
+                    if [[ $((${#line} + ${#word})) -gt 60 ]]; then
+                        wrapped="${wrapped}${line}\n"; line="$word"
+                    else
+                        line="${line}${word}"
+                    fi
+                done
+                [[ -n "$line" ]] && wrapped="${wrapped}${line}"
+            fi
+
+            # Auto-scale font
+            local test_size=$txt_size
+            local tmp_test="${tmp_dir}/test_${i}.png"
+            while [[ $test_size -gt 32 ]]; do
+                $magick_cmd "${magick_args[@]}" -pointsize "$test_size" -annotate +0+0 "$(echo -e "$wrapped")" "$tmp_test" 2>/dev/null
+                local bbox=$($magick_cmd identify -format "%wx%h" "$tmp_test" 2>/dev/null || echo "0x0")
+                local tw=$(echo "$bbox" | cut -dx -f1)
+                local th=$(echo "$bbox" | cut -dx -f2)
+                [[ -n "$tw" && -n "$th" && "$tw" -le "$txt_w" && "$th" -le "$txt_h" ]] && break
+                test_size=$(( test_size - 32 ))
+            done
+            rm -f "$tmp_test"
+
+            $magick_cmd "${magick_args[@]}" -pointsize "$test_size" -annotate +0+0 "$(echo -e "$wrapped")" "$tmp_img" 2>/dev/null
+            [[ ! -f "$tmp_img" ]] && error "Failed to create text image $i" && exit 1
+            info "Created text image $i: '$txt' (${txt_w}x${txt_h}, size=${test_size})"
         fi
+    done
+
+    # Build cmd_pic arguments - pass all images with their parameters
+    local pic_args=("$input" "$output")
+    for i in "${!texts[@]}"; do
+        local txt_at="${text_ats[$i]}"
+        local txt_dur="${text_durations[$i]}"
+        local txt_rect="${text_rects[$i]}"
+        local rect_p1 rect_p2
+        read -r rect_p1 rect_p2 <<< "$txt_rect"
         
-        info "Text image created: $tmp_img"
+        # Extract raw time values (remove seconds: prefix)
+        local raw_at="$txt_at"
+        [[ "$raw_at" =~ ^seconds: ]] && raw_at="${raw_at#seconds:}"
+        [[ "$raw_at" =~ ^frame: ]] && raw_at="f${raw_at#frame:}"
+        local raw_dur="$txt_dur"
+        [[ "$raw_dur" =~ ^seconds: ]] && raw_dur="${raw_dur#seconds:}"
+        [[ "$raw_dur" =~ ^frame: ]] && raw_dur="f${raw_dur#frame:}"
+        
+        pic_args+=(--at "$raw_at" --duration "$raw_dur" --rect "$rect_p1" "$rect_p2" "${tmp_images[$i]}")
+    done
 
-        # Pass options BEFORE the picture file so they get parsed correctly
-        # Split rect into two parts for cmd_pic
-        local rect_part1 rect_part2
-        read -r rect_part1 rect_part2 <<< "$rect"
-        cmd_pic "$input" "$output" --at "$raw_at" --duration "$raw_duration" --rect "$rect_part1" "$rect_part2" "$tmp_img"
-        local result=$?
-        rm -f "$tmp_img"
-        return $result
-    fi
-
-    # drawtext filter
-    local escaped="$text"
-    escaped="${escaped//\\/\\\\}"; escaped="${escaped//\'/\\\'}"; escaped="${escaped//:/\\:}"
-    escaped="${escaped//;/\\;}"; escaped="${escaped//[/\\[}"; escaped="${escaped//]/\\]}"
-
-    local opts="text='${escaped}':fontsize=${size}:fontcolor=${color}"
-    [[ -n "$font" ]] && opts+=":font='${font}'"
-    [[ "$bold" == "true" ]] && opts+=":fontcolor_expr=${color}@1|bold"
-    opts+=":x=${x1}+(${rect_w}-text_w)/2:y=${y1}+(${rect_h}-text_h)/2"
-    [[ -n "$bg_color" ]] && opts+=":box=1:boxcolor=${bg_color}@0.8"
-    if [[ -n "$outline" ]]; then
-        IFS=':' read -r ow oc <<< "$outline"
-        opts+=":borderw=${ow}:bordercolor=${oc:-black}"
-    fi
-
-    local start_s end_s
-    start_s=$(time_to_seconds "$at" "$fps")
-    end_s=$(echo "$start_s $(time_to_seconds "$duration" "$fps")" | awk '{printf "%.6f", $1+$2}')
-    opts+=":enable='between(t\\,${start_s}\\,${end_s})'"
-
-    local filters="[0:v]drawtext=${opts}[out]"
-    local loglevel="warning"
-    [[ "$VERBOSE" == "true" ]] && loglevel="info"
-
-    ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filters" -map "[out]" -map "0:a?" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+    # Execute pic command with all images
+    cmd_pic "${pic_args[@]}"
+    local result=$?
+    
+    # Cleanup
+    rm -rf "$tmp_dir"
+    return $result
 }
 
 # ============================================================================
