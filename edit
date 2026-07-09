@@ -325,15 +325,36 @@ EOF
 
 show_crop_help() {
     cat << 'EOF'
-edit crop - Extract a portion of video by time
+edit crop - Extract (keep) a portion of video by time
 
 USAGE:
     edit crop INPUT OUTPUT [OPTIONS]
 
 OPTIONS:
-    --from TIME     Start time. Default: beginning
-    --to TIME       End time. Default: end
+    --from TIME     Start time to keep (negative = from end)
+    --to TIME       End time to keep (negative = from end)
     -v, --verbose   Show verbose output
+
+TIME FORMATS:
+    10          seconds
+    10.5        seconds with decimal
+    3:45        minutes:seconds
+    2:03:45     hours:minutes:seconds
+    f180        frame number
+    -30         negative = from end of clip
+
+EXAMPLES:
+    # Keep section from 15s to 25s
+    edit crop input.mp4 output.mp4 --from 15 --to 25
+
+    # Keep from 1m30s to 2m15s
+    edit crop input.mp4 output.mp4 --from 1:30 --to 2:15
+
+    # Keep only last 30 seconds (--from -30 = from 30s before end)
+    edit crop input.mp4 output.mp4 --from -30
+
+    # Keep only first 30 seconds (--to 30 = up to 30s)
+    edit crop input.mp4 output.mp4 --to 30
 EOF
 }
 
@@ -345,8 +366,8 @@ USAGE:
     edit cut INPUT OUTPUT [OPTIONS]
 
 OPTIONS:
-    --from TIME     Start of section to remove (or keep start if only --to given)
-    --to TIME       End of section to remove (or keep end if only --from given)
+    --from TIME     Start of section to remove (negative = from end)
+    --to TIME       End of section to remove (negative = from end)
     -v, --verbose   Show verbose output
 
 TIME FORMATS:
@@ -364,11 +385,11 @@ EXAMPLES:
     # Remove from 1m30s to 2m15s
     edit cut input.mp4 output.mp4 --from 1:30 --to 2:15
 
-    # Keep only first 30 seconds (remove from 30s to end)
-    edit cut input.mp4 output.mp4 --to 30
-
-    # Keep only last 30 seconds (remove from start to -30s)
+    # Remove last 30 seconds (--from -30 = from 30s before end to end)
     edit cut input.mp4 output.mp4 --from -30
+
+    # Remove first 30 seconds (--to 30 = from start to 30s)
+    edit cut input.mp4 output.mp4 --to 30
 
     # Remove frames 100 to 200
     edit cut input.mp4 output.mp4 --from f100 --to f200
@@ -1095,11 +1116,21 @@ cmd_crop() {
     [[ -z "$input" || -z "$output" ]] && error "Usage: edit crop INPUT OUTPUT --from TIME --to TIME" && exit 1
     [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
 
+    # Get video info for time conversion
+    local vid_duration vid_fps
+    vid_duration=$(get_duration "$input")
+    vid_fps=$(get_video_fps "$input")
+    
+    # Convert time values to seconds
+    local from_sec="" to_sec=""
+    [[ -n "$from_time" ]] && from_sec=$(parse_time_value "$from_time" "$vid_fps" "$vid_duration")
+    [[ -n "$to_time" ]] && to_sec=$(parse_time_value "$to_time" "$vid_fps" "$vid_duration")
+
     local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
     local cmd=(ffmpeg -y -loglevel "$loglevel")
-    [[ -n "$from_time" ]] && cmd+=(-ss "$from_time")
+    [[ -n "$from_sec" ]] && cmd+=(-ss "$from_sec")
     cmd+=(-i "$input")
-    [[ -n "$to_time" ]] && cmd+=(-to "$to_time")
+    [[ -n "$to_sec" ]] && cmd+=(-to "$to_sec")
     cmd+=(-c copy -stats "$output")
 
     "${cmd[@]}" && success "Created: $output" || error "Failed"
