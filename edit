@@ -545,7 +545,7 @@ cmd_pic() {
 
 cmd_text() {
     local input="" output="" text="" at="seconds:0" duration="seconds:3"
-    local rect="" color="white" size="48" font="" bold=false outline="" bg_color=""
+    local rect="" color="white" size="768" font="" bold=false outline="" bg_color=""
     local raw_at="0" raw_duration="3"  # Store raw values for passing to cmd_pic
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_text_help && exit 0; done
@@ -636,11 +636,53 @@ cmd_text() {
             done
         fi
 
-        local -a magick_args=("-size" "${rect_w}x${rect_h}" "xc:none" "-fill" "${color}" "-pointsize" "${size}" "-gravity" "center")
+        local -a magick_args=("-size" "${rect_w}x${rect_h}" "xc:none" "-fill" "${color}" "-gravity" "center")
         [[ "$bold" == "true" ]] && magick_args+=("-weight" "Bold")
         [[ -n "$use_font" ]] && magick_args+=("-font" "$use_font")
 
-        $magick_cmd "${magick_args[@]}" -annotate +0+0 "${text}" "$tmp_img" 2>/dev/null
+        # Use -annotate with word wrapping by adding newlines every ~60 chars
+        # Also auto-scale font to fit if text is too long
+        local wrapped_text="$text"
+        # Simple word wrap at ~60 characters
+        if [[ ${#text} -gt 60 ]]; then
+            wrapped_text=""
+            local line=""
+            for word in $text; do
+                if [[ ${#line} -gt 0 ]]; then
+                    line="$line "
+                fi
+                if [[ $((${#line} + ${#word})) -gt 60 ]]; then
+                    wrapped_text="${wrapped_text}${line}\n"
+                    line="$word"
+                else
+                    line="${line}${word}"
+                fi
+            done
+            [[ -n "$line" ]] && wrapped_text="${wrapped_text}${line}"
+        fi
+
+        # Auto-scale if text won't fit - reduce font size iteratively
+        local test_size=$size
+        local tmp_test="/tmp/edit_text_test_$$.png"
+        while [[ $test_size -gt 32 ]]; do
+            $magick_cmd "${magick_args[@]}" -pointsize "$test_size" \
+                -annotate +0+0 "$(echo -e "$wrapped_text")" "$tmp_test" 2>/dev/null
+            # Check if text fits by comparing bounding box
+            local bbox
+            bbox=$($magick_cmd identify -format "%wx%h" "$tmp_test" 2>/dev/null || echo "0x0")
+            local test_w test_h
+            test_w=$(echo "$bbox" | cut -dx -f1)
+            test_h=$(echo "$bbox" | cut -dx -f2)
+            if [[ -n "$test_w" && -n "$test_h" && "$test_w" -le "$rect_w" && "$test_h" -le "$rect_h" ]]; then
+                break
+            fi
+            test_size=$(( test_size - 32 ))
+        done
+        rm -f "$tmp_test"
+
+        # Create final image
+        $magick_cmd "${magick_args[@]}" -pointsize "$test_size" \
+            -annotate +0+0 "$(echo -e "$wrapped_text")" "$tmp_img" 2>/dev/null
         
         if [[ ! -f "$tmp_img" ]]; then
             error "Failed to create text image with ImageMagick"
