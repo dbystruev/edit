@@ -188,31 +188,32 @@ EOF
 
 show_pic_help() {
     cat << 'EOF'
-edit pic - Overlay an image onto a video
+edit pic - Overlay an image or video onto a video
 
 USAGE:
-    edit pic INPUT OUTPUT PICTURE [OPTIONS]
+    edit pic INPUT OUTPUT PICTURE_OR_VIDEO [OPTIONS]
 
 ARGUMENTS:
     INPUT           Input video file
     OUTPUT          Output video file
-    PICTURE         Image file to overlay (PNG, JPG, GIF, etc.)
+    MEDIA           Image (PNG, JPG, GIF) or video (MP4, MOV, etc.) to overlay
 
 OPTIONS:
     --at TIME       Start time (default: 0)
     --duration TIME Duration (default: 3)
-    --rect X1,Y1 X2,Y2  Rectangle coordinates for picture placement
+    --rect X1,Y1 X2,Y2  Rectangle coordinates for overlay placement
     --mode MODE     Insert mode: aspect-fit (default), aspect-fill, scale
     --opacity VAL   Opacity: 0.0-1.0 or 0%-100% (default: 1.0)
+    --audio VAL     Audio mix level: 0.0-1.0 (default: 0 = no audio from overlay)
     -v, --verbose   Show verbose output
 
 SEQUENCE MODE:
-    Each image inherits parameters from the previous one.
-    Options after an image update that image's parameters.
+    Each media inherits parameters from the previous one.
+    Options after a media file update that file's parameters.
 
     edit pic input.mp4 output.mp4 \
         img1.png --at 0 --rect 10%,10% 40%,40% \
-        img2.png --at 5 --rect 50%,50% 90%,90%
+        img2.mp4 --at 5 --rect 50%,50% 90%,90% --audio 0.5
 EOF
 }
 
@@ -694,39 +695,59 @@ load_params_file() {
 
 cmd_pic() {
     local input="" output="" param_file=""
-    local pictures=() pic_ats=() pic_durations=() pic_rects=()
-    local global_mode="aspect-fit" global_opacity="1.0"
-    local at="seconds:0" duration="seconds:3" rect=""
+    local pictures=() pic_ats=() pic_durations=() pic_rects=() pic_audio=()
+    local global_mode="aspect-fit" global_opacity="1.0" global_audio="0"
+    local at="seconds:0" duration="seconds:3" rect="" audio_mix="0"
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_pic_help && exit 0; done
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -v|--verbose) VERBOSE=true; shift ;;
-            --at) at=$(parse_time "$2") || exit 1; shift 2 ;;
-            --duration) duration=$(parse_time "$2") || exit 1; shift 2 ;;
-            --rect) rect="$2 $3"; shift 3 ;;
+            --at)
+                at=$(parse_time "$2") || exit 1
+                # Update last picture's at if it exists
+                [[ ${#pictures[@]} -gt 0 ]] && pic_ats[$((${#pictures[@]}-1))]="$at"
+                shift 2 ;;
+            --duration)
+                duration=$(parse_time "$2") || exit 1
+                [[ ${#pictures[@]} -gt 0 ]] && pic_durations[$((${#pictures[@]}-1))]="$duration"
+                shift 2 ;;
+            --rect)
+                rect="$2 $3"
+                [[ ${#pictures[@]} -gt 0 ]] && pic_rects[$((${#pictures[@]}-1))]="$rect"
+                shift 3 ;;
             --mode) global_mode="$2"; shift 2 ;;
-            --opacity) global_opacity=$(parse_opacity "$2") || exit 1; shift 2 ;;
+            --opacity)
+                global_opacity=$(parse_opacity "$2") || exit 1
+                shift 2 ;;
+            --audio)
+                audio_mix=$(parse_opacity "$2") || exit 1
+                [[ ${#pictures[@]} -gt 0 ]] && pic_audio[$((${#pictures[@]}-1))]="$audio_mix"
+                shift 2 ;;
             --file) param_file="$2"; shift 2 ;;
             -*) error "Unknown: $1"; exit 1 ;;
             *)
-                if [[ "$1" =~ \.(jpg|jpeg|png|gif|bmp|tiff|webp)$ ]]; then
-                    # Add picture with current defaults
+                # First two non-option args are input and output
+                if [[ -z "$input" ]]; then
+                    input="$1"
+                elif [[ -z "$output" ]]; then
+                    output="$1"
+                else
+                    # Everything else is overlay media (image or video)
                     pictures+=("$1")
                     pic_ats+=("$at")
                     pic_durations+=("$duration")
                     pic_rects+=("$rect")
-                elif [[ -z "$input" ]]; then input="$1"
-                elif [[ -z "$output" ]]; then output="$1"
-                else error "Unexpected: $1"; exit 1; fi
+                    pic_audio+=("$audio_mix")
+                fi
                 shift ;;
         esac
     done
 
     [[ -z "$input" ]] && error "Missing INPUT" && exit 1
     [[ -z "$output" ]] && error "Missing OUTPUT" && exit 1
-    [[ ${#pictures[@]} -eq 0 ]] && error "Missing PICTURE" && exit 1
+    [[ ${#pictures[@]} -eq 0 ]] && error "Missing PICTURE or VIDEO" && exit 1
     for i in "${!pictures[@]}"; do [[ -z "${pic_rects[$i]}" ]] && error "Missing --rect for ${pictures[$i]}" && exit 1; done
     [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
     for pic in "${pictures[@]}"; do [[ ! -f "$pic" ]] && error "Not found: $pic" && exit 1; done
@@ -740,6 +761,8 @@ cmd_pic() {
     for pic in "${pictures[@]}"; do input_args+=(-i "$pic"); done
 
     local filters="" last_label="[0:v]" input_idx=1
+    local has_video_overlay=false has_audio_mix=false
+    
     for i in "${!pictures[@]}"; do
         local coords start_s end_s
         coords=$(parse_rect "${pic_rects[$i]}" "$vid_width" "$vid_height") || exit 1
@@ -747,12 +770,42 @@ cmd_pic() {
         read -r x1 y1 _ _ rect_w rect_h <<< "$coords"
         start_s=$(time_to_seconds "${pic_ats[$i]}" "$fps")
         end_s=$(echo "$start_s $(time_to_seconds "${pic_durations[$i]}" "$fps")" | awk '{printf "%.6f", $1+$2}')
+        local dur_s=$(time_to_seconds "${pic_durations[$i]}" "$fps")
 
         info "${pictures[$i]}: at=${start_s}s, rect=${x1},${y1} (${rect_w}x${rect_h})"
 
-        filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba[ovr${i}];"
-        [[ "$global_opacity" != "1.0" ]] && filters+="[ovr${i}]colorchannelmixer=aa=${global_opacity}[ovr${i}];"
-        filters+="${last_label}[ovr${i}]overlay=${x1}:${y1}:enable='between(t\\,${start_s}\\,${end_s})'[v${input_idx}];"
+        # Check if this is a video or image
+        if [[ "${pictures[$i]}" =~ \.(mp4|mov|avi|mkv|webm|flv|wmv|m4v)$ ]]; then
+            # Video overlay - need to loop/trim and handle audio
+            has_video_overlay=true
+            
+            # Scale and trim the overlay video
+            filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,"
+            filters+="trim=start=0:end=${dur_s},setpts=PTS-STARTPTS[ovr${i}];"
+            
+            [[ "$global_opacity" != "1.0" ]] && filters+="[ovr${i}]colorchannelmixer=aa=${global_opacity}[ovr${i}];"
+            
+            # Overlay video
+            filters+="${last_label}[ovr${i}]overlay=${x1}:${y1}:enable='between(t\\,${start_s}\\,${end_s})'[v${input_idx}];"
+            
+            # Handle audio mixing for video overlay (only if overlay has audio and audio_vol > 0)
+            local audio_vol="${pic_audio[$i]}"
+            local overlay_has_audio=false
+            ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "${pictures[$i]}" 2>/dev/null | grep -q . && overlay_has_audio=true
+            
+            if [[ "$audio_vol" != "0" && "$overlay_has_audio" == "true" ]]; then
+                filters+="[${input_idx}:a]atrim=start=0:end=${dur_s},asetpts=PTS-STARTPTS,volume=${audio_vol}[ovr_a];"
+                filters+="[0:a]volume=1.0[main_a];"
+                filters+="[main_a][ovr_a]amix=inputs=2:duration=first:dropout_transition=0[aout];"
+                has_audio_mix=true
+            fi
+        else
+            # Image overlay - existing behavior
+            filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba[ovr${i}];"
+            [[ "$global_opacity" != "1.0" ]] && filters+="[ovr${i}]colorchannelmixer=aa=${global_opacity}[ovr${i}];"
+            filters+="${last_label}[ovr${i}]overlay=${x1}:${y1}:enable='between(t\\,${start_s}\\,${end_s})'[v${input_idx}];"
+        fi
+        
         last_label="[v${input_idx}]"
         input_idx=$((input_idx + 1))
     done
@@ -761,7 +814,16 @@ cmd_pic() {
     local loglevel="warning"
     [[ "$VERBOSE" == "true" ]] && loglevel="info"
 
-    ffmpeg -y -loglevel "$loglevel" "${input_args[@]}" -filter_complex "$filters" -map "$last_label" -map "0:a?" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+    # Build output mapping
+    local map_args=(-map "$last_label")
+    if [[ "$has_audio_mix" == "true" ]]; then
+        # Use mixed audio if video overlay has audio and audio_mix > 0
+        map_args+=(-map "[aout]" -c:a aac)
+    else
+        map_args+=(-map "0:a?" -c:a copy)
+    fi
+
+    ffmpeg -y -loglevel "$loglevel" "${input_args[@]}" -filter_complex "$filters" "${map_args[@]}" -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
