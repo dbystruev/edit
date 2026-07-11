@@ -776,8 +776,18 @@ cmd_pic() {
 
         # Check if this is a video or image
         if [[ "${pictures[$i]}" =~ \.(mp4|mov|avi|mkv|webm|flv|wmv|m4v)$ ]]; then
-            # Video overlay - need to loop/trim and handle audio
+            # Video overlay - use video's actual duration if no explicit duration given
             has_video_overlay=true
+            
+            # Get overlay video duration
+            local overlay_dur
+            overlay_dur=$(get_duration "${pictures[$i]}")
+            # If default duration (3s), use overlay video's duration
+            if [[ "${pic_durations[$i]}" == "seconds:3" ]]; then
+                dur_s="$overlay_dur"
+                end_s=$(echo "$start_s $dur_s" | awk '{printf "%.6f", $1+$2}')
+                info "Using video duration: ${dur_s}s"
+            fi
             
             # Scale and trim the overlay video
             filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,"
@@ -1327,10 +1337,17 @@ cmd_insert() {
     [[ -z "$main" || -z "$inserted" || -z "$output" ]] && error "Usage: edit insert MAIN INSERTED OUTPUT --at TIME" && exit 1
     [[ ! -f "$main" || ! -f "$inserted" ]] && error "File not found" && exit 1
 
+    # Parse time value to seconds
+    local vid_duration vid_fps
+    vid_duration=$(get_duration "$main")
+    vid_fps=$(get_video_fps "$main")
+    local at_sec
+    at_sec=$(parse_time_value "$at_time" "$vid_fps" "$vid_duration")
+
     local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
-    local filter="[0:v]trim=start=0:end=${at_time},setpts=PTS-STARTPTS[v1];[0:v]trim=start=${at_time},setpts=PTS-STARTPTS[v2];[1:v]setpts=PTS-STARTPTS[v3];"
+    local filter="[0:v]trim=start=0:end=${at_sec},setpts=PTS-STARTPTS[v1];[0:v]trim=start=${at_sec},setpts=PTS-STARTPTS[v2];[1:v]setpts=PTS-STARTPTS[v3];"
     filter+="[v1][v3][v2]concat=n=3:v=1:a=0[vout];"
-    filter+="[0:a]atrim=start=0:end=${at_time}[a1];[0:a]atrim=start=${at_time}[a2];[1:a]asetpts=PTS-STARTPTS[a3];"
+    filter+="[0:a]atrim=start=0:end=${at_sec}[a1];[0:a]atrim=start=${at_sec}[a2];[1:a]asetpts=PTS-STARTPTS[a3];"
     filter+="[a1][a3][a2]concat=n=3:v=0:a=1[aout]"
 
     ffmpeg -y -loglevel "$loglevel" -i "$main" -i "$inserted" -filter_complex "$filter" -map "[vout]" -map "[aout]" -stats "$output" && success "Created: $output" || error "Failed"
