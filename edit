@@ -159,6 +159,7 @@ COMMANDS:
     fade-out            Apply fade out effect to end of video
     resize              Resize video dimensions
     frame               Extract a single frame
+    dedup               Remove duplicate/static frames
     split               Split video into subclips
     join                Concatenate multiple clips
     transcribe          Transcribe audio/video to text
@@ -545,6 +546,35 @@ OPTIONS:
     --height H      Target height
     --scale P       Scale factor (e.g., 0.5)
     -v, --verbose   Show verbose output
+EOF
+}
+
+show_dedup_help() {
+    cat << 'EOF'
+edit dedup - Remove duplicate/static frames from video
+
+USAGE:
+    edit dedup INPUT OUTPUT [OPTIONS]
+
+OPTIONS:
+    --threshold N   Difference threshold (default: 0.001)
+                    Lower = more aggressive dedup
+    -v, --verbose   Show verbose output
+
+DESCRIPTION:
+    Removes frames that are identical or nearly identical to the
+    previous frame. Useful for removing pauses, static screens,
+    or filler content from recordings.
+
+EXAMPLES:
+    # Remove static frames with default threshold
+    edit dedup input.mp4 output.mp4
+
+    # More aggressive dedup (remove more similar frames)
+    edit dedup input.mp4 output.mp4 --threshold 0.01
+
+    # Less aggressive (only remove very similar frames)
+    edit dedup input.mp4 output.mp4 --threshold 0.0001
 EOF
 }
 
@@ -1469,8 +1499,33 @@ cmd_resize() {
 }
 
 # ============================================================================
-# frame Command
+# dedup Command
 # ============================================================================
+
+cmd_dedup() {
+    local input="" output="" threshold="0.001"
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_dedup_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --threshold) threshold="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit dedup INPUT OUTPUT [--threshold 0.001]" && exit 1
+    [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
+
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    
+    # Use mpdecimate to remove duplicate frames
+    # mpdecimate parameters:
+    #   max=0: no maximum limit on frames to discard
+    #   hi=768*1024: high threshold for static detection
+    #   lo=768*1024/2: low threshold
+    #   frac=0.33: fraction of frames that must match
+    info "Removing duplicate frames (threshold: $threshold)..."
+    
+    ffmpeg -y -loglevel "$loglevel" -i "$input" \
+        -vf "mpdecimate=hi=${threshold}:lo=${threshold}" \
+        -c:v libx264 -crf 23 -c:a copy -stats "$output" \
+        && success "Created: $output" || error "Failed"
+}
 
 cmd_frame() {
     local input="" output="" at_time="0"
@@ -1700,10 +1755,11 @@ main() {
         fade-out|fadeout) cmd_fadeout "$@";;
         resize) cmd_resize "$@";;
         frame) cmd_frame "$@";;
+        dedup) cmd_dedup "$@";;
         split) cmd_split "$@";;
         join|concat|cat) cmd_join "$@";;
         transcribe|whisper) cmd_transcribe "$@";;
-        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, fade-in, fade-out, resize, frame, split, join, transcribe"; exit 1;;
+        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, fade-in, fade-out, resize, frame, dedup, split, join, transcribe"; exit 1;;
     esac
 }
 
