@@ -696,6 +696,7 @@ load_params_file() {
 cmd_pic() {
     local input="" output="" param_file=""
     local pictures=() pic_ats=() pic_durations=() pic_rects=() pic_audio=()
+    local pic_explicit_duration=()  # Track which pictures have explicit duration
     local global_mode="aspect-fit" global_opacity="1.0" global_audio="0"
     local at="seconds:0" duration="seconds:3" rect="" audio_mix="0"
 
@@ -711,7 +712,10 @@ cmd_pic() {
                 shift 2 ;;
             --duration)
                 duration=$(parse_time "$2") || exit 1
-                [[ ${#pictures[@]} -gt 0 ]] && pic_durations[$((${#pictures[@]}-1))]="$duration"
+                if [[ ${#pictures[@]} -gt 0 ]]; then
+                    pic_durations[$((${#pictures[@]}-1))]="$duration"
+                    pic_explicit_duration[$((${#pictures[@]}-1))]="true"
+                fi
                 shift 2 ;;
             --rect)
                 rect="$2 $3"
@@ -782,8 +786,9 @@ cmd_pic() {
             # Get overlay video duration
             local overlay_dur
             overlay_dur=$(get_duration "${pictures[$i]}")
-            # If default duration (3s), use overlay video's duration
-            if [[ "${pic_durations[$i]}" == "seconds:3" ]]; then
+            
+            # Use video duration only if user didn't specify duration for this picture
+            if [[ "${pic_explicit_duration[$i]}" != "true" ]]; then
                 dur_s="$overlay_dur"
                 end_s=$(echo "$start_s $dur_s" | awk '{printf "%.6f", $1+$2}')
                 info "Using video duration: ${dur_s}s"
