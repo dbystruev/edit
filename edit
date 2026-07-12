@@ -1522,10 +1522,11 @@ cmd_dedup() {
     # Default 1024 works well for most videos
     info "Removing duplicate frames (threshold: $threshold)..."
     
-    # mpdecimate with max=0 allows unlimited frame dropping
-    # Use fps_mode=vfr to output variable frame rate
+    # mpdecimate marks frames for removal
+    # setpts resets timestamps based on frame count
+    # fps_mode=vfr outputs variable frame rate
     ffmpeg -y -loglevel "$loglevel" -i "$input" \
-        -vf "mpdecimate=hi=${threshold}:lo=${threshold}:max=0" \
+        -vf "mpdecimate=hi=${threshold}:lo=${threshold}:max=0,setpts=N/FRAME_RATE/TB" \
         -fps_mode vfr \
         -c:v libx264 -crf 23 -c:a copy -stats "$output" \
         && success "Created: $output" || error "Failed"
