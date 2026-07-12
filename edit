@@ -567,8 +567,8 @@ DESCRIPTION:
     previous frame. Useful for removing pauses, static screens,
     or filler content from recordings.
     
-    Note: Output duration may be shorter than input because
-    duplicate frames are actually removed (not just skipped).
+    Output duration will be shorter because duplicate frames are
+    actually removed, not just skipped.
 
 EXAMPLES:
     # Remove static frames with default threshold
@@ -1520,11 +1520,12 @@ cmd_dedup() {
     # Use mpdecimate to remove duplicate frames
     # mpdecimate threshold is in terms of pixel difference sum
     # Default 1024 works well for most videos
-    # -fps_mode vfr ensures dropped frames are not duplicated
     info "Removing duplicate frames (threshold: $threshold)..."
     
+    # mpdecimate with max=0 allows unlimited frame dropping
+    # Use fps_mode=vfr to output variable frame rate
     ffmpeg -y -loglevel "$loglevel" -i "$input" \
-        -vf "mpdecimate=hi=${threshold}:lo=${threshold}" \
+        -vf "mpdecimate=hi=${threshold}:lo=${threshold}:max=0" \
         -fps_mode vfr \
         -c:v libx264 -crf 23 -c:a copy -stats "$output" \
         && success "Created: $output" || error "Failed"
