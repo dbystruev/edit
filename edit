@@ -566,6 +566,9 @@ DESCRIPTION:
     Removes frames that are identical or nearly identical to the
     previous frame. Useful for removing pauses, static screens,
     or filler content from recordings.
+    
+    Note: Output duration may be shorter than input because
+    duplicate frames are actually removed (not just skipped).
 
 EXAMPLES:
     # Remove static frames with default threshold
@@ -1517,10 +1520,12 @@ cmd_dedup() {
     # Use mpdecimate to remove duplicate frames
     # mpdecimate threshold is in terms of pixel difference sum
     # Default 1024 works well for most videos
+    # -vsync 0 ensures dropped frames are not duplicated
     info "Removing duplicate frames (threshold: $threshold)..."
     
     ffmpeg -y -loglevel "$loglevel" -i "$input" \
         -vf "mpdecimate=hi=${threshold}:lo=${threshold}" \
+        -vsync 0 \
         -c:v libx264 -crf 23 -c:a copy -stats "$output" \
         && success "Created: $output" || error "Failed"
 }
