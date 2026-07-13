@@ -835,7 +835,7 @@ cmd_pic() {
             [[ "$global_opacity" != "1.0" ]] && filters+="[ovr${i}]colorchannelmixer=aa=${global_opacity}[ovr${i}];"
             
             # Overlay video with enable to control visibility
-            filters+="${last_label}[ovr${i}]overlay=${x1}:${y1}:enable='between(t\\,${start_s}\\,${end_s})'[v${input_idx}];"
+            filters+="${last_label}[ovr${i}]overlay=${x1}:${y1}:enable='between(t\\,${start_s}\\,${end_s})':eval=frame[v${input_idx}];"
             
             # Handle audio mixing for video overlay (only if overlay has audio and audio_vol > 0)
             local audio_vol="${pic_audio[$i]}"
