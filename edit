@@ -778,6 +778,7 @@ cmd_pic() {
                     pic_durations+=("$duration")
                     pic_rects+=("$rect")
                     pic_audio+=("$audio_mix")
+                    pic_explicit_duration+=("")
                 fi
                 shift ;;
         esac
