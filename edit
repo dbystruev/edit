@@ -829,13 +829,13 @@ cmd_pic() {
                 info "Using video duration: ${dur_s}s"
             fi
             
-            # Scale and trim the overlay video to exact duration
-            filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,trim=start=0:end=${dur_s},setpts=PTS-STARTPTS[ovr${i}];"
-            
+            # Scale and trim the overlay video to exact duration, offset PTS to start at --at time
+            filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,trim=start=0:end=${dur_s},setpts=PTS+${start_s}/TB[ovr${i}];"
+
             [[ "$global_opacity" != "1.0" ]] && filters+="[ovr${i}]colorchannelmixer=aa=${global_opacity}[ovr${i}];"
-            
-            # Overlay video at specified position with enable timing
-            filters+="${last_label}[ovr${i}]overlay=${x1}:${y1}:enable='between(t\\,${start_s}\\,${end_s})':eval=frame[v${input_idx}];"
+
+            # Overlay video — PTS offset positions it, eof_action=pass stops overlay when stream ends
+            filters+="${last_label}[ovr${i}]overlay=${x1}:${y1}:eof_action=pass[v${input_idx}];"
             
             # Handle audio mixing for video overlay (only if overlay has audio and audio_vol > 0)
             local audio_vol="${pic_audio[$i]}"
@@ -843,7 +843,7 @@ cmd_pic() {
             ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "${pictures[$i]}" 2>/dev/null | grep -q . && overlay_has_audio=true
             
             if [[ "$audio_vol" != "0" && "$overlay_has_audio" == "true" ]]; then
-                filters+="[${input_idx}:a]atrim=start=0:end=${dur_s},asetpts=PTS-STARTPTS,volume=${audio_vol}[ovr_a];"
+                filters+="[${input_idx}:a]atrim=start=0:end=${dur_s},asetpts=PTS+${start_s}/TB,volume=${audio_vol}[ovr_a];"
                 filters+="[0:a]volume=1.0[main_a];"
                 filters+="[main_a][ovr_a]amix=inputs=2:duration=first:dropout_transition=0[aout];"
                 has_audio_mix=true
