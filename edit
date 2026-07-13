@@ -1524,20 +1524,13 @@ cmd_dedup() {
     
     # mpdecimate marks frames for removal
     # setpts resets timestamps based on frame count
-    # Try fps_mode first (newer ffmpeg), fall back to vsync (older)
-    if ffmpeg -hide_banner -h 2>&1 | grep -q "fps_mode"; then
-        ffmpeg -y -loglevel "$loglevel" -i "$input" \
-            -vf "mpdecimate=hi=${threshold}:lo=${threshold}:max=0,setpts=N/FRAME_RATE/TB" \
-            -fps_mode vfr \
-            -c:v libx264 -crf 23 -c:a copy -stats "$output" \
-            && success "Created: $output" || error "Failed"
-    else
-        ffmpeg -y -loglevel "$loglevel" -i "$input" \
-            -vf "mpdecimate=hi=${threshold}:lo=${threshold}:max=0,setpts=N/FRAME_RATE/TB" \
-            -vsync vfr \
-            -c:v libx264 -crf 23 -c:a copy -stats "$output" \
-            && success "Created: $output" || error "Failed"
-    fi
+    # -an removes audio (it would be duplicated otherwise)
+    # Use -movflags +faststart to fix metadata
+    ffmpeg -y -loglevel "$loglevel" -i "$input" \
+        -vf "mpdecimate=hi=${threshold}:lo=${threshold}:max=0,setpts=N/FRAME_RATE/TB" \
+        -an \
+        -c:v libx264 -crf 23 -movflags +faststart -stats "$output" \
+        && success "Created: $output" || error "Failed"
 }
 
 cmd_frame() {
