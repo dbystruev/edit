@@ -829,13 +829,12 @@ cmd_pic() {
                 info "Using video duration: ${dur_s}s"
             fi
             
-            # Scale and trim the overlay video
-            filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,"
-            filters+="trim=start=0:end=${dur_s},setpts=PTS-STARTPTS[ovr${i}];"
+            # Scale the overlay video (no trim - let it play naturally with enable)
+            filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba[ovr${i}];"
             
             [[ "$global_opacity" != "1.0" ]] && filters+="[ovr${i}]colorchannelmixer=aa=${global_opacity}[ovr${i}];"
             
-            # Overlay video
+            # Overlay video with enable to control visibility
             filters+="${last_label}[ovr${i}]overlay=${x1}:${y1}:enable='between(t\\,${start_s}\\,${end_s})'[v${input_idx}];"
             
             # Handle audio mixing for video overlay (only if overlay has audio and audio_vol > 0)
