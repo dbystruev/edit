@@ -55,16 +55,16 @@ curl -fsSL https://raw.githubusercontent.com/dbystruev/edit/main/edit -o edit &&
 
 The script auto-detects and offers to install missing dependencies.
 
-## Remote Usage via SSH
+## Remote Testing via SSH Tunnel
+
+To allow a remote server to SSH back into your Mac for local testing:
 
 ```bash
-# Copy edit to remote server
-scp edit $SERVER:~/bin/edit
+# From your Mac, open a reverse tunnel:
+ssh -R 20022:localhost:22 $SERVER
 
-# Run commands remotely
-ssh $SERVER '~/bin/edit stat video.mp4'
-ssh $SERVER '~/bin/edit pic input.mp4 output.mp4 logo.png --at 5 --rect 10%,10% 90%,90%'
-ssh $SERVER '~/bin/edit text input.mp4 output.mp4 "Hello" --at 2 --color red'
+# The server can then test on your Mac:
+ssh -p 20022 localhost
 ```
 
 ## Documentation

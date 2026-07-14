@@ -206,6 +206,7 @@ OPTIONS:
     --mode MODE     Insert mode: aspect-fit (default), aspect-fill, scale
     --opacity VAL   Opacity: 0.0-1.0 or 0%-100% (default: 1.0)
     --audio VAL     Audio mix level: 0.0-1.0 (default: 0 = no audio from overlay)
+    --keep-last SEC Seconds to hold last frame after PiP video ends (default: 0)
     -v, --verbose   Show verbose output
 
 SEQUENCE MODE:
@@ -729,10 +730,10 @@ load_params_file() {
 
 cmd_pic() {
     local input="" output="" param_file=""
-    local pictures=() pic_ats=() pic_durations=() pic_rects=() pic_audio=()
+    local pictures=() pic_ats=() pic_durations=() pic_rects=() pic_audio=() pic_keep_last=()
     local pic_explicit_duration=()  # Track which pictures have explicit duration
     local global_mode="aspect-fit" global_opacity="1.0" global_audio="0"
-    local at="seconds:0" duration="seconds:3" rect="" audio_mix="0"
+    local at="seconds:0" duration="seconds:3" rect="" audio_mix="0" keep_last="0"
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_pic_help && exit 0; done
 
@@ -763,6 +764,10 @@ cmd_pic() {
                 audio_mix=$(parse_opacity "$2") || exit 1
                 [[ ${#pictures[@]} -gt 0 ]] && pic_audio[$((${#pictures[@]}-1))]="$audio_mix"
                 shift 2 ;;
+            --keep-last)
+                keep_last="$2"
+                [[ ${#pictures[@]} -gt 0 ]] && pic_keep_last[$((${#pictures[@]}-1))]="$keep_last"
+                shift 2 ;;
             --file) param_file="$2"; shift 2 ;;
             -*) error "Unknown: $1"; exit 1 ;;
             *)
@@ -778,6 +783,7 @@ cmd_pic() {
                     pic_durations+=("$duration")
                     pic_rects+=("$rect")
                     pic_audio+=("$audio_mix")
+                    pic_keep_last+=("$keep_last")
                     pic_explicit_duration+=("")
                 fi
                 shift ;;
@@ -830,7 +836,15 @@ cmd_pic() {
             fi
             
             # Scale and trim the overlay video to exact duration, offset PTS to start at --at time
-            filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba,trim=start=0:end=${dur_s},setpts=PTS+${start_s}/TB[ovr${i}];"
+            local kl="${pic_keep_last[$i]:-0}"
+            local total_dur="$dur_s"
+            local tpad_filter=""
+            if [[ "$kl" != "0" && "$kl" != "" ]]; then
+                total_dur=$(echo "$dur_s $kl" | awk '{printf "%.6f", $1+$2}')
+                tpad_filter=",tpad=stop_mode=clone:stop_duration=${kl}"
+                info "Keeping last frame for ${kl}s after video ends"
+            fi
+            filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba${tpad_filter},trim=start=0:end=${total_dur},setpts=PTS+${start_s}/TB[ovr${i}];"
 
             [[ "$global_opacity" != "1.0" ]] && filters+="[ovr${i}]colorchannelmixer=aa=${global_opacity}[ovr${i}];"
 
