@@ -568,7 +568,24 @@ OPTIONS:
     --width W       Target width
     --height H      Target height
     --scale P       Scale factor (e.g., 0.5)
+    --mode M        Resize mode when both width and height are set:
+                      aspect-fit  - fit inside box, pad with black bars (default)
+                      aspect-fill - fill box, crop excess
+                      stretch     - exact dimensions, may distort
     -v, --verbose   Show verbose output
+
+EXAMPLES:
+    # Scale by factor
+    edit resize input.mp4 output.mp4 --scale 0.5
+
+    # Fit inside 1920x1080, keeping aspect ratio, with black bars
+    edit resize input.mp4 output.mp4 --width 1920 --height 1080
+
+    # Fill 1920x1080, cropping excess
+    edit resize input.mp4 output.mp4 --width 1920 --height 1080 --mode aspect-fill
+
+    # Exact dimensions (may distort)
+    edit resize input.mp4 output.mp4 --width 1920 --height 1080 --mode stretch
 EOF
 }
 
@@ -755,7 +772,7 @@ cmd_pic() {
     local pictures=() pic_ats=() pic_durations=() pic_rects=() pic_audio=() pic_keep_last=()
     local pic_explicit_duration=()  # Track which pictures have explicit duration
     local global_mode="aspect-fit" global_opacity="1.0" global_audio="0"
-    local at="seconds:0" duration="seconds:3" rect="" audio_mix="0" keep_last="0"
+    local at="seconds:0" duration="seconds:3" rect="" audio_mix="0"
 
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_pic_help && exit 0; done
 
@@ -787,8 +804,9 @@ cmd_pic() {
                 [[ ${#pictures[@]} -gt 0 ]] && pic_audio[$((${#pictures[@]}-1))]="$audio_mix"
                 shift 2 ;;
             --keep-last)
-                keep_last="$2"
-                [[ ${#pictures[@]} -gt 0 ]] && pic_keep_last[$((${#pictures[@]}-1))]="$keep_last"
+                if [[ ${#pictures[@]} -gt 0 ]]; then
+                    pic_keep_last[$((${#pictures[@]}-1))]="$2"
+                fi
                 shift 2 ;;
             --file) param_file="$2"; shift 2 ;;
             -*) error "Unknown: $1"; exit 1 ;;
@@ -805,7 +823,7 @@ cmd_pic() {
                     pic_durations+=("$duration")
                     pic_rects+=("$rect")
                     pic_audio+=("$audio_mix")
-                    pic_keep_last+=("$keep_last")
+                    pic_keep_last+=("0")
                     pic_explicit_duration+=("")
                 fi
                 shift ;;
@@ -879,7 +897,9 @@ cmd_pic() {
             ffprobe -v quiet -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "${pictures[$i]}" 2>/dev/null | grep -q . && overlay_has_audio=true
             
             if [[ "$audio_vol" != "0" && "$overlay_has_audio" == "true" ]]; then
-                filters+="[${input_idx}:a]atrim=start=0:end=${dur_s},asetpts=PTS+${start_s}/TB,volume=${audio_vol}[ovr_a];"
+                local start_ms
+                start_ms=$(echo "$start_s" | awk '{printf "%d", $1*1000}')
+                filters+="[${input_idx}:a]atrim=start=0:end=${dur_s},asetpts=PTS-STARTPTS,adelay=${start_ms}|${start_ms},volume=${audio_vol}[ovr_a];"
                 filters+="[0:a]volume=1.0[main_a];"
                 filters+="[main_a][ovr_a]amix=inputs=2:duration=first:dropout_transition=0[aout];"
                 has_audio_mix=true
@@ -1555,12 +1575,12 @@ cmd_fadeout() {
 # ============================================================================
 
 cmd_resize() {
-    local input="" output="" tw="" th="" scale=""
+    local input="" output="" tw="" th="" scale="" mode="aspect-fit"
     for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_resize_help && exit 0; done
     while [[ $# -gt 0 ]]; do
-        case "$1" in -v|--verbose) VERBOSE=true; shift;; --width) tw="$2"; shift 2;; --height) th="$2"; shift 2;; --scale) scale="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --width) tw="$2"; shift 2;; --height) th="$2"; shift 2;; --scale) scale="$2"; shift 2;; --mode) mode="$2"; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
     done
-    [[ -z "$input" || -z "$output" ]] && error "Usage: edit resize INPUT OUTPUT --width/--height/--scale" && exit 1
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit resize INPUT OUTPUT --width/--height/--scale [--mode aspect-fit|aspect-fill|stretch]" && exit 1
     [[ ! -f "$input" ]] && error "Not found: $input" && exit 1
     [[ -z "$tw" && -z "$th" && -z "$scale" ]] && error "Specify --width, --height, or --scale" && exit 1
 
@@ -1576,9 +1596,24 @@ cmd_resize() {
     fi
     tw=$(( tw / 2 * 2 )); th=$(( th / 2 * 2 ))
 
-    info "Resizing: ${cw}x${ch} -> ${tw}x${th}"
+    local vfilter=""
+    if [[ "$mode" == "aspect-fit" || "$mode" == "aspectfill" || "$mode" == "aspect_fill" ]]; then
+        # Scale to fit inside target box, pad with black bars
+        if [[ "$mode" == "aspect-fit" ]]; then
+            vfilter="scale=${tw}:${th}:force_original_aspect_ratio=decrease,pad=${tw}:${th}:(ow-iw)/2:(oh-ih)/2:color=black"
+        else
+            # aspect-fill: scale to fill, crop overflow
+            vfilter="scale=${tw}:${th}:force_original_aspect_ratio=increase,crop=${tw}:${th}"
+        fi
+    elif [[ "$mode" == "stretch" ]]; then
+        vfilter="scale=${tw}:${th}"
+    else
+        vfilter="scale=${tw}:${th}"
+    fi
+
+    info "Resizing: ${cw}x${ch} -> ${tw}x${th} (mode: ${mode})"
     local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
-    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "scale=${tw}:${th}" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "$vfilter" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
