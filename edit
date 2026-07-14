@@ -1609,9 +1609,9 @@ cmd_resize() {
     tw=$(( tw / 2 * 2 )); th=$(( th / 2 * 2 ))
 
     local vfilter=""
-    if [[ "$mode" == "aspect-fit" || "$mode" == "aspectfill" || "$mode" == "aspect_fill" ]]; then
+    if [[ "$mode" == "aspect-fit" || "$mode" == "aspect-fill" || "$mode" == "aspectfill" || "$mode" == "aspect_fill" ]]; then
         # Scale to fit inside target box, pad with black bars
-        if [[ "$mode" == "aspect-fit" ]]; then
+        if [[ "$mode" == "aspect-fit" || "$mode" == "aspectfill" || "$mode" == "aspect_fill" ]]; then
             vfilter="scale=${tw}:${th}:force_original_aspect_ratio=decrease,pad=${tw}:${th}:(ow-iw)/2:(oh-ih)/2:color=black"
         else
             # aspect-fill: scale to fill, crop overflow
