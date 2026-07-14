@@ -884,7 +884,7 @@ cmd_pic() {
                 tpad_filter=",tpad=stop_mode=clone:stop_duration=${kl}"
                 info "Keeping last frame for ${kl}s after video ends"
             fi
-            filters+="[${input_idx}:v]scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba${tpad_filter},trim=start=0:end=${total_dur},setpts=PTS+${start_s}/TB[ovr${i}];"
+            filters+="[${input_idx}:v]setsar=1,scale=${rect_w}:${rect_h}:force_original_aspect_ratio=decrease,pad=${rect_w}:${rect_h}:(ow-iw)/2:(oh-ih)/2:color=black@0,format=rgba${tpad_filter},trim=start=0:end=${total_dur},setpts=PTS+${start_s}/TB[ovr${i}];"
 
             [[ "$global_opacity" != "1.0" ]] && filters+="[ovr${i}]colorchannelmixer=aa=${global_opacity}[ovr${i}];"
 
@@ -1332,19 +1332,19 @@ cmd_crop() {
 
     if [[ -n "$from_sec" && -n "$to_sec" ]]; then
         # Keep from from_sec to to_sec
-        filter="[0:v]trim=start=${from_sec}:end=${to_sec},setpts=PTS-STARTPTS[vout];"
+        filter="[0:v]setsar=1,trim=start=${from_sec}:end=${to_sec},setpts=PTS-STARTPTS[vout];"
         filter+="[0:a]atrim=start=${from_sec}:end=${to_sec},asetpts=PTS-STARTPTS[aout]"
     elif [[ -n "$from_sec" ]]; then
         # Keep from from_sec to end (--from only = keep tail)
-        filter="[0:v]trim=start=${from_sec},setpts=PTS-STARTPTS[vout];"
+        filter="[0:v]setsar=1,trim=start=${from_sec},setpts=PTS-STARTPTS[vout];"
         filter+="[0:a]atrim=start=${from_sec},asetpts=PTS-STARTPTS[aout]"
     else
         # Keep from start to to_sec (--to only = keep head)
-        filter="[0:v]trim=start=0:end=${to_sec},setpts=PTS-STARTPTS[vout];"
+        filter="[0:v]setsar=1,trim=start=0:end=${to_sec},setpts=PTS-STARTPTS[vout];"
         filter+="[0:a]atrim=start=0:end=${to_sec},asetpts=PTS-STARTPTS[aout]"
     fi
 
-    ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filter" -map "[vout]" -map "[aout]" -c:v libx264 -crf 23 -c:a aac -stats "$output" && success "Created: $output" || error "Failed"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filter" -map "[vout]" -map "[aout]" -c:v libx264 -crf 23 -c:a aac -pix_fmt yuv420p -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
@@ -1625,7 +1625,7 @@ cmd_resize() {
 
     info "Resizing: ${cw}x${ch} -> ${tw}x${th} (mode: ${mode})"
     local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
-    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "$vfilter" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "setsar=1,$vfilter" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
