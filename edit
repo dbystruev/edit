@@ -428,6 +428,28 @@ OPTIONS:
 EOF
 }
 
+show_mute_help() {
+    cat << 'EOF'
+edit mute - Mute or reduce audio at a specified time range
+
+USAGE:
+    edit mute INPUT OUTPUT [OPTIONS]
+
+OPTIONS:
+    --at TIME       Start time (default: 0)
+    --duration TIME Duration (default: full)
+    --mix LEVEL     Audio level: 0.0 = silence, 0.5 = half volume (default: 0)
+    -v, --verbose   Show verbose output
+
+EXAMPLES:
+    # Mute first 5 seconds
+    edit mute input.mp4 output.mp4 --at 0 --duration 5
+
+    # Reduce volume to 30% between 10s and 20s
+    edit mute input.mp4 output.mp4 --at 10 --duration 10 --mix 0.3
+EOF
+}
+
 show_split_help() {
     cat << 'EOF'
 edit split - Split video into subclips at specified times
@@ -1440,6 +1462,49 @@ cmd_audio() {
 }
 
 # ============================================================================
+# mute Command
+# ============================================================================
+
+cmd_mute() {
+    local input="" output="" at_time="0" duration="" mix_level="0"
+    for arg in "$@"; do [[ "$arg" == "-h" || "$arg" == "--help" ]] && show_mute_help && exit 0; done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in -v|--verbose) VERBOSE=true; shift;; --at) at_time="$2"; shift 2;; --duration) duration="$2"; shift 2;; --mix) mix_level=$(parse_opacity "$2") || exit 1; shift 2;; -*) error "Unknown: $1"; exit 1;; *) [[ -z "$input" ]] && input="$1" || output="$1"; shift;; esac
+    done
+    [[ -z "$input" || -z "$output" ]] && error "Usage: edit mute INPUT OUTPUT --at TIME --duration TIME --mix LEVEL" && exit 1
+    [[ ! -f "$input" ]] && error "File not found: $input" && exit 1
+
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+
+    # Convert time format to seconds for awk
+    local start_s
+    start_s=$(echo "$at_time" | awk '{printf "%.6f", $1+0}')
+
+    local filter=""
+    if [[ -n "$duration" ]]; then
+        local dur_s
+        dur_s=$(echo "$duration" | awk '{printf "%.6f", $1+0}')
+        local end_s
+        end_s=$(echo "$start_s $dur_s" | awk '{printf "%.6f", $1+$2}')
+        local vid_dur
+        vid_dur=$(get_duration "$input")
+
+        # Split audio: before mute, muted section, after mute
+        filter="[0:a]atrim=start=0:end=${start_s},asetpts=PTS-STARTPTS[a1];"
+        filter+="[0:a]atrim=start=${start_s}:end=${end_s},asetpts=PTS-STARTPTS,volume=${mix_level}[a2];"
+        filter+="[0:a]atrim=start=${end_s},asetpts=PTS-STARTPTS[a3];"
+        filter+="[a1][a2][a3]concat=n=3:v=0:a=1[aout]"
+    else
+        # Mute from start_time to end of video
+        filter="[0:a]atrim=start=0:end=${start_s},asetpts=PTS-STARTPTS[a1];"
+        filter+="[0:a]atrim=start=${start_s},asetpts=PTS-STARTPTS,volume=${mix_level}[a2];"
+        filter+="[a1][a2]concat=n=2:v=0:a=1[aout]"
+    fi
+
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filter" -map "0:v" -map "[aout]" -c:v copy -shortest -stats "$output" && success "Created: $output" || error "Failed"
+}
+
+# ============================================================================
 # fade-in Command
 # ============================================================================
 
@@ -1771,6 +1836,7 @@ main() {
         cut) cmd_cut "$@";;
         insert) cmd_insert "$@";;
         audio) cmd_audio "$@";;
+        mute) cmd_mute "$@";;
         fade-in|fadein) cmd_fadein "$@";;
         fade-out|fadeout) cmd_fadeout "$@";;
         resize) cmd_resize "$@";;
@@ -1779,7 +1845,7 @@ main() {
         split) cmd_split "$@";;
         join|concat|cat) cmd_join "$@";;
         transcribe|whisper) cmd_transcribe "$@";;
-        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, fade-in, fade-out, resize, frame, dedup, split, join, transcribe"; exit 1;;
+        *) error "Unknown: $command"; echo "Commands: pic, text, stat, crop, cut, insert, audio, mute, fade-in, fade-out, resize, frame, dedup, split, join, transcribe"; exit 1;;
     esac
 }
 

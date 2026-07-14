@@ -28,6 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/dbystruev/edit/main/edit -o edit &&
 | `pic` | Overlay an image onto a video at a specified time |
 | `text` | Add text overlay to a video with font/color control |
 | `stat` | Display detailed info about a video or image file |
+| `mute` | Mute or reduce audio at a specified time range |
 
 ## Features
 
@@ -60,12 +61,16 @@ The script auto-detects and offers to install missing dependencies.
 To allow a remote server to SSH back into your Mac for local testing:
 
 ```bash
-# From your Mac, open a reverse tunnel:
+# 1. From your Mac, open a reverse tunnel (keep this session open):
 ssh -R 20022:localhost:22 $SERVER
 
-# The server can then test on your Mac:
-ssh -p 20022 localhost
+# 2. The server can now SSH into your Mac as $USER@localhost:
+ssh -p 20022 $USER@localhost uptime && uname -a
+ssh -p 20022 $USER@localhost 'export PATH="/opt/homebrew/bin:$PATH" && ffmpeg -version'
+ssh -p 20022 $USER@localhost 'cd ~/Downloads/GitHub/dbystruev/edit && git pull'
 ```
+
+If your Mac username differs from the server username, use `ssh -p 20022 $USER@localhost` where `$USER` is your Mac login name.
 
 ## Documentation
 
