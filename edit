@@ -1319,20 +1319,32 @@ cmd_crop() {
     local vid_duration vid_fps
     vid_duration=$(get_duration "$input")
     vid_fps=$(get_video_fps "$input")
-    
+
     # Convert time values to seconds
     local from_sec="" to_sec=""
     [[ -n "$from_time" ]] && from_sec=$(parse_time_value "$from_time" "$vid_fps" "$vid_duration")
     [[ -n "$to_time" ]] && to_sec=$(parse_time_value "$to_time" "$vid_fps" "$vid_duration")
 
-    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
-    local cmd=(ffmpeg -y -loglevel "$loglevel")
-    # Both -ss and -to must be before -i for correct behavior
-    [[ -n "$from_sec" ]] && cmd+=(-ss "$from_sec")
-    [[ -n "$to_sec" ]] && cmd+=(-to "$to_sec")
-    cmd+=(-i "$input" -c copy -stats "$output")
+    [[ -z "$from_sec" && -z "$to_sec" ]] && error "Specify --from and/or --to" && exit 1
 
-    "${cmd[@]}" && success "Created: $output" || error "Failed"
+    local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
+    local filter=""
+
+    if [[ -n "$from_sec" && -n "$to_sec" ]]; then
+        # Keep from from_sec to to_sec
+        filter="[0:v]trim=start=${from_sec}:end=${to_sec},setpts=PTS-STARTPTS[vout];"
+        filter+="[0:a]atrim=start=${from_sec}:end=${to_sec},asetpts=PTS-STARTPTS[aout]"
+    elif [[ -n "$from_sec" ]]; then
+        # Keep from from_sec to end (--from only = keep tail)
+        filter="[0:v]trim=start=${from_sec},setpts=PTS-STARTPTS[vout];"
+        filter+="[0:a]atrim=start=${from_sec},asetpts=PTS-STARTPTS[aout]"
+    else
+        # Keep from start to to_sec (--to only = keep head)
+        filter="[0:v]trim=start=0:end=${to_sec},setpts=PTS-STARTPTS[vout];"
+        filter+="[0:a]atrim=start=0:end=${to_sec},asetpts=PTS-STARTPTS[aout]"
+    fi
+
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filter" -map "[vout]" -map "[aout]" -c:v libx264 -crf 23 -c:a aac -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
