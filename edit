@@ -1344,7 +1344,7 @@ cmd_crop() {
         filter+="[0:a]atrim=start=0:end=${to_sec},asetpts=PTS-STARTPTS[aout]"
     fi
 
-    ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filter" -map "[vout]" -map "[aout]" -c:v libx264 -crf 23 -c:a aac -pix_fmt yuv420p -x264-params "sar=1\:1" -stats "$output" && success "Created: $output" || error "Failed"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -filter_complex "$filter" -map "[vout]" -map "[aout]" -c:v libx264 -crf 23 -c:a aac -pix_fmt yuv420p -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
@@ -1625,7 +1625,7 @@ cmd_resize() {
 
     info "Resizing: ${cw}x${ch} -> ${tw}x${th} (mode: ${mode})"
     local loglevel="warning"; [[ "$VERBOSE" == "true" ]] && loglevel="info"
-    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "setsar=1,$vfilter" -c:a copy -stats -x264-params "sar=1\:1" "$output" && success "Created: $output" || error "Failed"
+    ffmpeg -y -loglevel "$loglevel" -i "$input" -vf "setsar=1,$vfilter" -c:a copy -stats "$output" && success "Created: $output" || error "Failed"
 }
 
 # ============================================================================
