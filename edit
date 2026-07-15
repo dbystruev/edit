@@ -571,6 +571,7 @@ OPTIONS:
     --mode M        Resize mode when both width and height are set:
                       aspect-fit  - fit inside box, pad with black bars (default)
                       aspect-fill - fill box, crop excess
+                      center      - no scaling, center in new frame, pad or crop
                       stretch     - exact dimensions, may distort
     -v, --verbose   Show verbose output
 
@@ -586,6 +587,9 @@ EXAMPLES:
 
     # Exact dimensions (may distort)
     edit resize input.mp4 output.mp4 --width 1920 --height 1080 --mode stretch
+
+    # Center without scaling: pad if larger, crop if smaller
+    edit resize input.mp4 output.mp4 --width 1920 --height 1080 --mode center
 EOF
 }
 
@@ -1619,6 +1623,11 @@ cmd_resize() {
         fi
     elif [[ "$mode" == "stretch" ]]; then
         vfilter="scale=${tw}:${th}"
+    elif [[ "$mode" == "center" ]]; then
+        # No scaling: pad if target is larger, crop if target is smaller
+        local pad_w=$(( tw > cw ? tw : cw ))
+        local pad_h=$(( th > ch ? th : ch ))
+        vfilter="pad=${pad_w}:${pad_h}:(ow-iw)/2:(oh-ih)/2:color=black,crop=${tw}:${th}"
     else
         vfilter="scale=${tw}:${th}"
     fi
