@@ -12,70 +12,53 @@ Cross-reference: [README.md](README.md) | [Implementation plan](TODO.md)
 - [x] Implemented auto-install with user permission (apt, brew, choco, winget, dnf, yum, pacman, zypper)
 - [x] Created main command dispatcher to route subcommands
 
-## Phase 2: pic Command (image overlay)
+## Phase 2: pic Command
 
-- [x] Parse required arguments: input video, output video, picture file
-- [x] Parse `--at` parameter: accept seconds (decimal) or frame number (prefix with 'f')
-- [x] Parse `--duration` parameter: accept seconds (decimal) or frame count, default 3s
-- [x] Parse `--appear` parameter: fade-in modes (none, quick, slow)
-- [x] Parse `--disappear` parameter: fade-out modes (none, quick, slow)
-- [x] Parse `--rect` parameter: two corner coordinates (pixels or percentages)
-- [x] Parse `--mode` parameter: aspect-fit (default), aspect-fill, scale
-- [x] Parse `--opacity` parameter: 0.0-1.0 or 0%-100% (default opaque=1.0)
-- [x] Parse `--transparent-bg` parameter: yes/no for PNG/GIF transparency
-- [x] Validate all input files exist before processing
-- [x] Auto-detect video resolution for percentage coordinate conversion
-- [x] Generate ffmpeg filter complex for picture overlay
-- [x] Implement fade-in/fade-out using ffmpeg fade filter
-- [x] Handle aspect-fit: fit image within rect preserving aspect ratio
-- [x] Handle aspect-fill: fill rect cropping image preserving aspect ratio
-- [x] Handle scale: stretch image to fill rect exactly
-- [x] Execute ffmpeg command and handle errors
-- [x] Fixed coordinate calculation (X uses width, Y uses height)
-- [x] Fixed aspect-fit to properly center image in rectangle
-- [x] Added sequence mode for multiple images
-- [x] Added parameter file loading (`--file`)
-- [x] Reduced ffmpeg output verbosity (loglevel warning + stats)
+- [x] Image overlay with --at, --duration, --rect, --mode, --opacity
+- [x] Video overlay (picture-in-picture) with dynamic playback
+- [x] Sequence mode for multiple overlays
+- [x] Parameter file loading (`--file`)
+- [x] `--audio` option for mixing overlay audio at --at timestamp (using adelay)
+- [x] `--keep-last` option to hold last frame after PiP video ends
+- [x] SAR normalization in overlay filter to prevent stretching
 
-## Phase 3: text Command (text overlay)
+## Phase 3: text Command
 
-- [x] Parse required arguments: input video, output video, text string
-- [x] Parse `--at` parameter (same as pic)
-- [x] Parse `--duration` parameter (same as pic)
-- [x] Parse `--appear` / `--disappear` parameters (same as pic)
-- [x] Parse `--rect` parameter for text placement area
-- [x] Parse `--color` parameter: named colors or hex values
-- [x] Parse `--size` parameter: font size in pixels
-- [x] Parse `--font` parameter: font face name (system default)
-- [x] Parse `--bold` flag for bold text
-- [x] Parse `--italic` flag for italic text
-- [x] Parse `--outline` parameter: text outline width and color
-- [x] Parse `--shadow` parameter: drop shadow offset and color
-- [x] Parse `--bg-color` parameter: text background color
-- [x] Generate ffmpeg drawtext filter with all options
-- [x] Execute ffmpeg command and handle errors
-- [x] Added parameter file loading (`--file`)
+- [x] Text overlay with --at, --duration, --rect, --color, --size, --font, --bold
+- [x] Sequence mode for multiple texts
+- [x] ImageMagick fallback for macOS
 
-## Phase 4: stat Command (file info)
+## Phase 4: stat Command
 
-- [x] Parse input file argument
-- [x] Run ffprobe to extract video metadata
-- [x] Display: file size (human readable)
-- [x] Display: container format
-- [x] Display: video codec
-- [x] Display: resolution (width x height)
-- [x] Display: frame rate
-- [x] Display: duration / length
-- [x] Display: total frame count
-- [x] Display: bitrate
-- [x] Display: pixel format
-- [x] Format output as readable table
-- [x] Added `--json` and `--short` output options
+- [x] Display: file size, format, codec, resolution, frame rate, duration, frames, bitrate
+- [x] `--json` output option
 
-## Phase 5: Polish & Testing
+## Phase 5: Additional Commands
 
-- [x] Added examples to --help output
-- [x] Created dedicated help for each subcommand
-- [x] Simplified command names: pic, text, stat
-- [x] Added `--verbose` flag for debugging
-- [x] Added `--file` parameter for loading options from file
+- [x] **crop** - frame-accurate extraction (re-encoding, not stream copy)
+- [x] **cut** - remove portions of video by time
+- [x] **insert** - insert video at timestamp
+- [x] **audio** - replace/mix audio from another file
+- [x] **mute** - silence or reduce audio at time range
+- [x] **resize** - aspect-fit, aspect-fill, center, stretch modes with SAR normalization
+- [x] **frame** - extract single frame as image
+- [x] **dedup** - remove duplicate/static frames
+- [x] **split** - split video into subclips at specified times
+- [x] **join** - concatenate multiple clips
+- [x] **fade-in** / **fade-out** - video and audio fade effects
+- [x] **transcribe** - local whisper transcription (auto-installs)
+
+## Time Format Support
+
+- [x] All time parameters support seconds, MM:SS, HH:MM:SS, fXXX (frame numbers), negative values
+
+## Documentation
+
+- [x] Complete README.md with all commands, options, tables, and examples
+- [x] SSH tunnel instructions for remote Mac testing
+- [x] Help text with examples for every command
+
+## Platform Notes
+
+- macOS: ffmpeg 8.1.2, drawtext unavailable (ImageMagick fallback for text)
+- Tested on Ubuntu (ffmpeg 4.4.2) and macOS (ffmpeg 8.1.2)
